@@ -50,6 +50,16 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+// 0.5 security gate: never boot Production on dev auth defaults.
+if (app.Environment.IsProduction())
+{
+    var ao = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AuthOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(ao.Authority))
+        throw new InvalidOperationException("Production requires Auth:Authority (OIDC). Dev HS256 is Development-only.");
+    if (ao.EnableDevToken)
+        throw new InvalidOperationException("Production requires Auth:EnableDevToken=false.");
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
