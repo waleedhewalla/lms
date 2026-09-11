@@ -17,8 +17,10 @@ services:
   redis:
     image: redis:7
     container_name: edunexus-redis
+    command: redis-server --appendonly yes
     restart: unless-stopped
     ports: ["6380:6379"]
+    volumes: [redisdata:/data]
   rabbitmq:
     image: rabbitmq:3-management
     container_name: edunexus-rabbitmq
@@ -67,3 +69,4 @@ volumes:
   grafanadata: {}
   walarchive: {}
   pgbackup: {}
+  redisdata: {}
