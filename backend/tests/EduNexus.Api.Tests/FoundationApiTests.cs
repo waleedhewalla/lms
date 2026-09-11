@@ -410,6 +410,84 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Ai_AskEcho_LogsInteraction()
+    {
+        // Requires OpenSearch on 127.0.0.1:9201 (edunexus-opensearch).
+        var perms = AllPerms.Concat(["correspondence:create", "ai:manage", "ai:ask", "ai:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "AI Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        var person = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Noor AI", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var corr = await client.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant, type = "Internal", subject = "Campus shuttle schedule", content = "Shuttle runs hourly.",
+            authorId = person, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(),
+        });
+        Assert.Equal(HttpStatusCode.Created, corr.StatusCode);
+
+        var index = await client.PostAsync($"/api/ai/index?tenantId={tenant}", null);
+        Assert.Equal(HttpStatusCode.OK, index.StatusCode);
+
+        var ask = await client.PostAsJsonAsync("/api/ai/ask",
+            new { tenantId = tenant, question = "shuttle schedule", capability = (string?)null });
+        Assert.Equal(HttpStatusCode.OK, ask.StatusCode);
+        var answer = await ask.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("echo-extractive-v1", answer.GetProperty("model").GetString());
+        Assert.Contains("shuttle", answer.GetProperty("answer").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var interactions = await client.GetFromJsonAsync<JsonElement>($"/api/ai/interactions?tenantId={tenant}");
+        Assert.Equal(1, interactions.GetArrayLength());
+        Assert.Equal("ask", interactions[0].GetProperty("capability").GetString());
+    }
+
+    [Fact]
+    public async Task Integrations_Webhook_FailedDelivery_Logged()
+    {
+        // Requires RabbitMQ on localhost:5673. Unreachable target → Failed delivery row (no poison).
+        var perms = AllPerms.Concat(["integration:manage", "integration:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Hook Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        var person = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Hadi Hook", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var role = await client.PostAsJsonAsync("/api/roles",
+            new { tenantId = tenant, code = "hook.role", name = "Hook", permissions = Array.Empty<string>() });
+        Assert.Equal(HttpStatusCode.Created, role.StatusCode);
+
+        var reg = await client.PostAsJsonAsync("/api/integrations/endpoints",
+            new { tenantId = tenant, eventType = "RoleAssigned", targetUrl = "http://127.0.0.1:9/hook", secret = "s3cr3t" });
+        Assert.Equal(HttpStatusCode.Created, reg.StatusCode);
+        var badUrl = await client.PostAsJsonAsync("/api/integrations/endpoints",
+            new { tenantId = tenant, eventType = "RoleAssigned", targetUrl = "not-a-url", secret = "x" });
+        Assert.Equal(HttpStatusCode.BadRequest, badUrl.StatusCode);
+
+        var assign = await client.PostAsJsonAsync("/api/roles/assign",
+            new { tenantId = tenant, personId = person, roleCode = "hook.role" });
+        Assert.Equal(HttpStatusCode.Created, assign.StatusCode);
+
+        // relay (2s) → dispatcher (1s) → failed POST → delivery row (poll ≤ 30s)
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            var deliveries = await client.GetFromJsonAsync<JsonElement>($"/api/integrations/deliveries?tenantId={tenant}");
+            if (deliveries.GetArrayLength() > 0)
+            {
+                Assert.Equal("Failed", deliveries[0].GetProperty("status").GetString());
+                return;
+            }
+            await Task.Delay(500);
+        }
+        Assert.Fail("Integration delivery not recorded within 30s");
+    }
+
+    [Fact]
     public async Task AssignRole_WritesOutbox_And_RelayDispatches()
     {
         // Requires RabbitMQ on localhost:5673 (edunexus-rabbitmq). The test host

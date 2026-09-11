@@ -1,7 +1,10 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using EduNexus.Api.AI;
 using EduNexus.Api.Auth;
 using EduNexus.Api.Events;
+using EduNexus.Api.Integrations;
 using EduNexus.Api.Storage;
 using Minio;
 using OpenTelemetry.Metrics;
@@ -37,8 +40,7 @@ builder.Services.AddHostedService<EventRelay>();
 builder.Services.AddHostedService<NotificationConsumer>();
 builder.Services.AddHostedService<SlaMonitor>();
 
-// --- S3-compatible object storage (MinIO reference) ---
-builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.Section));
+// --- S3-compatible object storage (MinIO reference) ---builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.Section));
 builder.Services.AddSingleton(sp =>
 {
     var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<StorageOptions>>().Value;
@@ -50,6 +52,18 @@ builder.Services.AddSingleton(sp =>
     var c = sp.GetRequiredService<IMinioClient>();
     return new ObjectStorage(c, o);
 });
+
+// --- AI (R5): tenant retrieval index + copilot + webhook fan-out ---
+builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.Section));
+builder.Services.AddHttpClient("ai").SetHandlerLifetime(TimeSpan.FromMinutes(5));
+builder.Services.AddHttpClient("integrations").SetHandlerLifetime(TimeSpan.FromMinutes(5));
+builder.Services.AddSingleton(sp =>
+{
+    var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiOptions>>().Value;
+    var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("ai");
+    return new TenantSearchIndex(http, o);
+});
+builder.Services.AddHostedService<IntegrationDispatcher>();
 
 // --- Observability: traces (OTLP, collector optional) + Prometheus metrics on /metrics ---
 builder.Services.AddOpenTelemetry()
@@ -1029,6 +1043,160 @@ strategy.MapPost("/kpis/{id:guid}/reading", async (AppDbContext db, HttpContext 
     return Results.Ok(k);
 });
 
+// ============================ R5 — AI & Ecosystem ============================
+
+var ai = app.MapGroup("/api/ai").WithTags("AI").RequireAuthorization();
+ai.MapPost("/index", async (AppDbContext db, HttpContext ctx, TenantSearchIndex index, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("ai:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    await index.EnsureIndexAsync(tenantId, ct);
+    var count = 0;
+    foreach (var c in await db.Correspondences.Where(x => x.TenantId == tenantId).Take(500).ToListAsync(ct))
+    { await index.IndexAsync(tenantId, "correspondence", c.Id, c.Subject, c.Content, ct); count++; }
+    foreach (var d in await db.Decisions.Where(x => x.TenantId == tenantId).Take(500).ToListAsync(ct))
+    { await index.IndexAsync(tenantId, "decision", d.Id, d.Text[..Math.Min(200, d.Text.Length)], d.Text, ct); count++; }
+    foreach (var d in await db.Documents.Where(x => x.TenantId == tenantId).Take(500).ToListAsync(ct))
+    { await index.IndexAsync(tenantId, "document", d.Id, d.Title, d.Title, ct); count++; }
+    foreach (var p in await db.Policies.Where(x => x.TenantId == tenantId).Take(500).ToListAsync(ct))
+    { await index.IndexAsync(tenantId, "policy", p.Id, p.Title, p.Content, ct); count++; }
+    DomainEvents.Record(db, tenantId, "TenantIndexed", "TenantIndexed",
+        nameof(Tenant), tenantId.ToString(),
+        payload: new { tenantId, documents = count }, details: count.ToString());
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(new { indexed = count });
+});
+ai.MapPost("/ask", async (AppDbContext db, HttpContext ctx, TenantSearchIndex index,
+    IHttpClientFactory httpFactory, Microsoft.Extensions.Options.IOptions<AiOptions> aiOpts,
+    AskReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("ai:ask")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Question)) return Results.BadRequest(new { error = "Question required." });
+    var capability = req.Capability ?? "ask";
+    List<(string Kind, string Title, string Text)> passages;
+    try { passages = await index.SearchAsync(req.TenantId, req.Question, 5, ct); }
+    catch
+    {
+        // Retrieval fallback: PG trigram search when OpenSearch is unreachable.
+        await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+        passages = (await db.Correspondences.Where(c => c.TenantId == req.TenantId && c.Subject.Contains(req.Question))
+                .Select(c => new { K = "correspondence", T = c.Subject }).Take(5).ToListAsync(ct))
+            .Select(x => (x.K, x.T, "")).ToList();
+    }
+    var opts = aiOpts.Value;
+    string answer, model;
+    double? confidence = null;
+    if (opts.Provider.Equals("OpenAI", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(opts.BaseUrl) && !string.IsNullOrWhiteSpace(opts.ApiKey))
+    {
+        (answer, model, confidence) = await GenerateOpenAiAsync(httpFactory, opts, req.Question, passages, ct);
+    }
+    else
+    {
+        // Echo provider: extractive, no external LLM — safe default for on-prem/air-gap.
+        model = "echo-extractive-v1";
+        answer = passages.Count == 0
+            ? "No relevant institutional content found for this question."
+            : "Relevant passages:\n" + string.Join("\n", passages.Select((p, i) => $"[{i + 1}] ({p.Kind}) {p.Title}"));
+    }
+    await using (var scope2 = await TenantScope.BeginAsync(db, req.TenantId, ct))
+    {
+        db.AiInteractions.Add(new AiInteraction(Guid.NewGuid(), req.TenantId, capability,
+            req.Question[..Math.Min(500, req.Question.Length)],
+            answer[..Math.Min(2000, answer.Length)],
+            model, confidence, null, DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync(ct);
+        await scope2.CommitAsync(ct);
+    }
+    return Results.Ok(new { answer, model, passages = passages.Select(p => new { kind = p.Kind, title = p.Title }) });
+});
+ai.MapGet("/interactions", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("ai:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.AiInteractions.Where(a => a.TenantId == tenantId)
+        .OrderByDescending(a => a.At).Take(100).ToListAsync(ct));
+});
+
+static async Task<(string Answer, string Model, double?)> GenerateOpenAiAsync(
+    IHttpClientFactory httpFactory, AiOptions opts, string question,
+    List<(string Kind, string Title, string Text)> passages, CancellationToken ct)
+{
+    var context = string.Join("\n", passages.Select((p, i) => $"[{i + 1}] ({p.Kind}) {p.Title}: {p.Text}"));
+    var body = JsonSerializer.Serialize(new
+    {
+        model = opts.Model,
+        messages = new object[]
+        {
+            new { role = "system", content = "Answer using only the provided institutional passages. If insufficient, say so." },
+            new { role = "user", content = $"Question: {question}\nPassages:\n{context}" },
+        },
+    });
+    using var req = new HttpRequestMessage(HttpMethod.Post, opts.BaseUrl.TrimEnd('/') + "/chat/completions")
+    {
+        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+    };
+    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", opts.ApiKey);
+    using var res = await httpFactory.CreateClient("ai").SendAsync(req, ct);
+    res.EnsureSuccessStatusCode();
+    using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+    var answer = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+    return (answer, opts.Model, null);
+}
+
+var integrations = app.MapGroup("/api/integrations").WithTags("Integrations").RequireAuthorization();
+integrations.MapGet("/endpoints", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("integration:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.IntegrationEndpoints.Where(e => e.TenantId == tenantId).ToListAsync(ct));
+});
+integrations.MapPost("/endpoints", async (AppDbContext db, HttpContext ctx, RegisterEndpointReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("integration:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Uri.TryCreate(req.TargetUrl, UriKind.Absolute, out var uri)
+        || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        return Results.BadRequest(new { error = "TargetUrl must be absolute http(s)." });
+    if (string.IsNullOrWhiteSpace(req.EventType)) return Results.BadRequest(new { error = "EventType required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var ep = new IntegrationEndpoint(Guid.NewGuid(), req.TenantId, req.EventType.Trim(), req.TargetUrl,
+        string.IsNullOrWhiteSpace(req.Secret) ? Guid.NewGuid().ToString("N") : req.Secret, true);
+    db.IntegrationEndpoints.Add(ep);
+    DomainEvents.Record(db, req.TenantId, "IntegrationEndpointRegistered", "IntegrationEndpointRegistered",
+        nameof(IntegrationEndpoint), ep.Id.ToString(),
+        payload: new { tenantId = req.TenantId, endpointId = ep.Id, eventType = ep.EventType }, details: ep.EventType);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/integrations/endpoints/{ep.Id}", new { ep.Id, ep.EventType, ep.TargetUrl });
+});
+integrations.MapDelete("/endpoints/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("integration:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var ep = await db.IntegrationEndpoints.FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == id, ct);
+    if (ep is null) return Results.NotFound(new { error = "Endpoint not found." });
+    db.Entry(ep).CurrentValues.SetValues(ep with { IsActive = false });
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.NoContent();
+});
+integrations.MapGet("/deliveries", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid? endpointId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("integration:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var q = db.IntegrationDeliveries.Where(d => d.TenantId == tenantId);
+    if (endpointId.HasValue) q = q.Where(d => d.EndpointId == endpointId.Value);
+    return Results.Ok(await q.OrderByDescending(d => d.At).Take(100).ToListAsync(ct));
+});
+
 app.Run();
 
 public sealed record CreateTenantReq(string Slug, string Name);
@@ -1067,3 +1235,5 @@ public sealed record CreatePlanReq(Guid TenantId, string Title, int YearFrom, in
 public sealed record CreateObjectiveReq(Guid TenantId, Guid PlanId, string Code, string Text);
 public sealed record CreateKpiReq(Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string? Unit);
 public sealed record KpiReadingReq(Guid TenantId, double Current);
+public sealed record AskReq(Guid TenantId, string Question, string? Capability);
+public sealed record RegisterEndpointReq(Guid TenantId, string EventType, string TargetUrl, string? Secret);

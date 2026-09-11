@@ -42,6 +42,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<StrategicPlan> StrategicPlans => Set<StrategicPlan>();
     public DbSet<Objective> Objectives => Set<Objective>();
     public DbSet<Kpi> Kpis => Set<Kpi>();
+    public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
+    public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
+    public DbSet<IntegrationDelivery> IntegrationDeliveries => Set<IntegrationDelivery>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -262,6 +265,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.ObjectiveId });
+        });
+        b.Entity<AiInteraction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.At });
+            e.Property(x => x.Capability).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Model).HasMaxLength(100).IsRequired();
+        });
+        b.Entity<IntegrationEndpoint>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EventType });
+        });
+        b.Entity<IntegrationDelivery>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EndpointId });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
         });
     }
 }

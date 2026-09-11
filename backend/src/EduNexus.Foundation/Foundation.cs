@@ -217,3 +217,19 @@ public sealed record Objective(Guid Id, Guid TenantId, Guid PlanId, string Code,
 
 public sealed record Kpi(
     Guid Id, Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string Unit);
+
+// ============================ R5 — AI & Ecosystem ============================
+
+/// <summary>Mandatory audit log for every AI interaction (09 governance).</summary>
+public sealed record AiInteraction(
+    Guid Id, Guid TenantId, string Capability, string InputExcerpt, string OutputExcerpt,
+    string Model, double? Confidence, Guid? RequestedBy, DateTimeOffset At);
+
+public enum IntegrationDeliveryStatus { Delivered, Failed }
+
+public sealed record IntegrationEndpoint(
+    Guid Id, Guid TenantId, string EventType, string TargetUrl, string Secret, bool IsActive);
+
+public sealed record IntegrationDelivery(
+    Guid Id, Guid TenantId, Guid EndpointId, string EventType, string Payload,
+    IntegrationDeliveryStatus Status, int Attempts, string? LastError, DateTimeOffset At);

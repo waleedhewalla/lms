@@ -93,6 +93,22 @@ CorrectiveAction (assignee + due). Each step validated + audited + evented.
 ### FR-STR-001 — Strategy & KPIs ✅ implemented
 Plan → Objective (unique code) → KPI (target/current/unit) → readings append via
 `POST /api/strategy/kpis/{id}/reading` with `KpiUpdated` event.
+
+## Release 5 FRs
+
+### FR-AI-001 — Tenant Indexing ✅ implemented (AI-06)
+`POST /api/ai/index?tenantId=` builds a per-tenant OpenSearch index (Arabic analyzer)
+over correspondence/decisions/documents/policies. Idempotent (PUT index); emits `TenantIndexed`.
+
+### FR-AI-002 — Ask Copilot ✅ implemented
+`POST /api/ai/ask` (perm `ai:ask`): retrieve top-5 (OS, PG fallback) → Echo extractive
+or OpenAI-compatible generative answer → mandatory `AiInteraction` log row.
+Covered by `Ai_AskEcho_LogsInteraction` (passage grounding + log assertions).
+
+### FR-INT-001 — Outbound Webhooks ✅ implemented
+Register per-(tenant, event) HTTPS endpoints (URL validated, secret auto-generated);
+`IntegrationDispatcher` POSTs HMAC-signed payloads; `IntegrationDelivery` log records
+Delivered/Failed. Covered by `Integrations_Webhook_FailedDelivery_Logged`.
 Actor: authorized employee. Behavior: validate tenant → create Employee/Student → `PersonCreated` audit. PG migration pending (see roadmap).
 
 Full FRS target 150–250 pages; add FR-COR-001 etc. in Release 2.
