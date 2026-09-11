@@ -7,10 +7,12 @@
 #        docker tag $img registry.local:5000/$img
 #        docker push registry.local:5000/$img
 #      done
-#    Build app images first:
+#    Build app images (verified 2026-09-11):
 #      docker build -f backend/Dockerfile -t edunexus-api:1.1.0 backend/
 #      docker build -f frontend/Dockerfile -t edunexus-web:1.1.0 frontend/
-#    (Dockerfiles are the operator's next step — see GA checklist.)
+#      docker run --rm -p 5298:8080 -e ASPNETCORE_ENVIRONMENT=Development \
+#        -e EDUNEXUS_CONNECTION="Host=host.docker.internal;Port=5433;..." edunexus-api:1.1.0
+#      # /health → Healthy, /metrics live (smoke-proven)
 # 2. Copy this chart + values to the site (usb/tar).
 # 3. Create secrets (NEVER in values files):
 #      kubectl -n edunexus create secret generic edunexus-postgres --from-literal=password=$(openssl rand -base64 24)

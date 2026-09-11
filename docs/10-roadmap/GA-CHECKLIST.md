@@ -20,7 +20,7 @@ Each gate below is PASS, PARTIAL, or OPEN (v1.0.0 → v1.1.0 deltas noted).
 | 10 | Observability | PASS (v1.1.0) | Grafana datasource+dashboard provisioned, 3 Prometheus alerts evaluating; OTLP traces need collector |
 | 11 | Auth | PASS-local (v1.1.0) | Keycloak OIDC proven end-to-end (role→permission mapping, tenant claim, `RequireHttpsMetadata` non-prod exception); customer IdP = config task per `infra/keycloak/README.md` |
 | 12 | Frontend | PASS-slice (v1.1.0) | 9 routes (R1–R5) build on Next 15.5.25; polish/i18n pending |
-| 13 | K8s/air-gap prod install | PARTIAL (v1.1.0) | Helm chart lint+render verified, AIRGAP.md runbook; app Dockerfiles + migration Job pending |
+| 13 | K8s/air-gap prod install | PARTIAL (v1.1.0) | Helm chart lint+render verified, app images build + smoke-proven (api 346MB serves dev DB; web 973MB — slim down before air-gap), AIRGAP.md runbook; EF migration Job pending |
 | 14 | Pen-test | OPEN | automated baseline done (headers, vuln audit in `security-baseline.md`); human pen-test pending |
 | 15 | Data migration tooling | PASS-slice (v1.1.0) | CSV directory import (dry-run + import) tested; SIS/ERP sync pending |
 | 16 | Docs at target depth | OPEN | skeletons + implemented FRs only (01 target 250–350pp etc.) |
