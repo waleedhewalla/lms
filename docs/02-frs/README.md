@@ -53,6 +53,22 @@ linked task marked Done; `ApprovalDecided` event. Double-decide → 409.
 ### FR-TSK-001 — Complete Task ✅ / FR-SLA-001 — Breach Detection ✅
 Tasks auto-created on submit; `SlaMonitor` marks overdue Open/InProgress tasks Breached
 + `TaskBreached` event; breaches queryable at `GET /api/sla/breaches`.
+
+## Release 3 FRs
+
+### FR-GOV-001 — Committee & Meeting Lifecycle ✅ implemented
+Committee CRUD + members (unique per person); meeting schedule with agenda items,
+attendance (upsert per person), conclude with minutes. Statuses guard transitions
+(double-conclude → 409, decisions on cancelled meetings → 409).
+
+### FR-GOV-002 — Decision Publication & Actions ✅ implemented (BP-ACD-014)
+Decision published at creation → `DecisionPublished` (notifies committee members);
+actions assigned to people → `ActionAssigned` (notifies assignee); advance
+Assigned→InProgress→Done→Verified. Covered by `Governance_FullChain_MeetingToAction_PolicyAck`.
+
+### FR-GOV-003 — Policy Publish & Acknowledge ✅ implemented
+Draft→Published (double-publish → 409); per-person acknowledge (double-ack → 409);
+`GET /api/policies/{id}/pending` lists active staff without ack (compliance view).
 Actor: authorized employee. Behavior: validate tenant → create Employee/Student → `PersonCreated` audit. PG migration pending (see roadmap).
 
 Full FRS target 150–250 pages; add FR-COR-001 etc. in Release 2.

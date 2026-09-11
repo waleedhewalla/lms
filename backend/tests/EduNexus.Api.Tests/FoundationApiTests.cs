@@ -252,6 +252,91 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Governance_FullChain_MeetingToAction_PolicyAck()
+    {
+        // BP-ACD-014: Agenda→Meeting→Discussion→Decision→Approval→Publication→Assignment→Action→Evidence→Verification→Closure
+        var perms = AllPerms.Concat(["correspondence:create", "correspondence:read",
+            "committee:create", "committee:read", "meeting:create", "meeting:read",
+            "decision:create", "decision:read", "action:update",
+            "policy:create", "policy:read", "policy:ack", "notification:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Gov Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        async Task<Guid> MkPerson(string name)
+        {
+            var r = await client.PostAsJsonAsync("/api/people",
+                new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null });
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return IdOf(await r.Content.ReadFromJsonAsync<JsonElement>());
+        }
+        var dean = await MkPerson("Dean Gov");
+        var member = await MkPerson("Member Gov");
+
+        var committee = IdOf(await (await client.PostAsJsonAsync("/api/committees",
+            new { tenantId = tenant, code = "FC", name = "Faculty Council" })).Content.ReadFromJsonAsync<JsonElement>());
+        foreach (var p in new[] { dean, member })
+        {
+            var m = await client.PostAsJsonAsync($"/api/committees/{committee}/members",
+                new { tenantId = tenant, personId = p, role = "Member" });
+            Assert.Equal(HttpStatusCode.Created, m.StatusCode);
+        }
+
+        var meeting = IdOf(await (await client.PostAsJsonAsync("/api/meetings", new
+        {
+            tenantId = tenant, committeeId = committee, title = "FC Session 1",
+            startsAt = DateTimeOffset.UtcNow.AddDays(1),
+            agenda = new[] { new { title = "Budget approval", description = "FY budget" } },
+        })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var att = await client.PostAsJsonAsync($"/api/meetings/{meeting}/attendance",
+            new { tenantId = tenant, personId = dean, status = "Present" });
+        Assert.Equal(HttpStatusCode.OK, att.StatusCode);
+
+        var conclude = await client.PostAsJsonAsync($"/api/meetings/{meeting}/conclude",
+            new { tenantId = tenant, minutes = "Budget approved unanimously." });
+        Assert.Equal(HttpStatusCode.OK, conclude.StatusCode);
+
+        var decision = IdOf(await (await client.PostAsJsonAsync($"/api/meetings/{meeting}/decisions",
+            new { tenantId = tenant, text = "Approve FY budget." })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var action = IdOf(await (await client.PostAsJsonAsync($"/api/decisions/{decision}/actions",
+            new { tenantId = tenant, assigneeId = member, description = "Publish budget circular.", dueAt = (DateTimeOffset?)null })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var adv = await client.PostAsJsonAsync($"/api/decision-actions/{action}/advance",
+            new { tenantId = tenant, status = "Done" });
+        Assert.Equal(HttpStatusCode.OK, adv.StatusCode);
+
+        // member notified of assignment (poll ≤ 25s)
+        var deadline = DateTime.UtcNow.AddSeconds(25);
+        while (DateTime.UtcNow < deadline)
+        {
+            var notifs = await client.GetFromJsonAsync<JsonElement>($"/api/notifications?tenantId={tenant}&personId={member}");
+            if (notifs.EnumerateArray().Any(n => n.GetProperty("title").GetString() == "Action assigned"))
+                break;
+            await Task.Delay(500);
+        }
+
+        // policy publish → ack → pending empty
+        var policy = IdOf(await (await client.PostAsJsonAsync("/api/policies",
+            new { tenantId = tenant, code = "POL-001", title = "Attendance policy", content = "Be present." })).Content.ReadFromJsonAsync<JsonElement>());
+        var pub = await client.PostAsJsonAsync($"/api/policies/{policy}/publish", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.OK, pub.StatusCode);
+        var ack = await client.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
+            new { tenantId = tenant, personId = member });
+        Assert.Equal(HttpStatusCode.Created, ack.StatusCode);
+        var dupAck = await client.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
+            new { tenantId = tenant, personId = member });
+        Assert.Equal(HttpStatusCode.Conflict, dupAck.StatusCode);
+        var pending = await client.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}/pending?tenantId={tenant}");
+        Assert.DoesNotContain(pending.EnumerateArray(), p => p.GetProperty("id").GetGuid() == member);
+        Assert.Contains(pending.EnumerateArray(), p => p.GetProperty("id").GetGuid() == dean);
+    }
+
+    [Fact]
     public async Task AssignRole_WritesOutbox_And_RelayDispatches()
     {
         // Requires RabbitMQ on localhost:5673 (edunexus-rabbitmq). The test host

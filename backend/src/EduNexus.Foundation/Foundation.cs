@@ -146,3 +146,39 @@ public sealed record Notification(
 
 /// <summary>Per-tenant monotonic counters (correspondence numbers, request numbers…). Row-locked per transaction.</summary>
 public sealed record TenantSequence(Guid TenantId, string Scope, long NextValue);
+
+// ============================ R3 — Governance ============================
+
+public sealed record Committee(Guid Id, Guid TenantId, string Code, string Name, bool IsActive);
+
+public sealed record CommitteeMember(Guid Id, Guid TenantId, Guid CommitteeId, Guid PersonId, string Role, DateTimeOffset JoinedAt);
+
+public enum MeetingStatus { Scheduled, InProgress, Concluded, Cancelled }
+
+public sealed record Meeting(
+    Guid Id, Guid TenantId, Guid CommitteeId, string Title,
+    DateTimeOffset StartsAt, MeetingStatus Status, string? Minutes);
+
+public sealed record AgendaItem(Guid Id, Guid TenantId, Guid MeetingId, int Order, string Title, string? Description);
+
+public enum AttendanceStatus { Present, Absent, Excused }
+
+public sealed record Attendance(Guid Id, Guid TenantId, Guid MeetingId, Guid PersonId, AttendanceStatus Status);
+
+public enum DecisionStatus { Draft, Published, Implemented, Verified, Closed }
+
+public sealed record Decision(
+    Guid Id, Guid TenantId, Guid MeetingId, string Text,
+    DecisionStatus Status, DateTimeOffset PublishedAt);
+
+public enum DecisionActionStatus { Assigned, InProgress, Done, Verified }
+
+public sealed record DecisionAction(
+    Guid Id, Guid TenantId, Guid DecisionId, Guid AssigneeId, string Description,
+    DecisionActionStatus Status, DateTimeOffset DueAt);
+
+public enum PolicyStatus { Draft, Published, Retired }
+
+public sealed record Policy(Guid Id, Guid TenantId, string Code, string Title, string Content, PolicyStatus Status, int Version);
+
+public sealed record PolicyAcknowledgement(Guid Id, Guid TenantId, Guid PolicyId, Guid PersonId, DateTimeOffset At);

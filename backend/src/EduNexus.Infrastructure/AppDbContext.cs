@@ -23,6 +23,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<TenantSequence> TenantSequences => Set<TenantSequence>();
+    public DbSet<Committee> Committees => Set<Committee>();
+    public DbSet<CommitteeMember> CommitteeMembers => Set<CommitteeMember>();
+    public DbSet<Meeting> Meetings => Set<Meeting>();
+    public DbSet<AgendaItem> AgendaItems => Set<AgendaItem>();
+    public DbSet<Attendance> Attendances => Set<Attendance>();
+    public DbSet<Decision> Decisions => Set<Decision>();
+    public DbSet<DecisionAction> DecisionActions => Set<DecisionAction>();
+    public DbSet<Policy> Policies => Set<Policy>();
+    public DbSet<PolicyAcknowledgement> PolicyAcknowledgements => Set<PolicyAcknowledgement>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -138,6 +147,57 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         b.Entity<TenantSequence>(e =>
         {
             e.HasKey(x => new { x.TenantId, x.Scope });
+        });
+        b.Entity<Committee>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+        b.Entity<CommitteeMember>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CommitteeId, x.PersonId }).IsUnique();
+        });
+        b.Entity<Meeting>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CommitteeId });
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<AgendaItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.MeetingId, x.Order }).IsUnique();
+        });
+        b.Entity<Attendance>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.MeetingId, x.PersonId }).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<Decision>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.MeetingId });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<DecisionAction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.DecisionId });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<Policy>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<PolicyAcknowledgement>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId }).IsUnique();
         });
     }
 }

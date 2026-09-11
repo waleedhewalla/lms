@@ -30,6 +30,14 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 
 Enums serialize as strings (JsonStringEnumConverter).
 
+## R3 implemented
+- `GET/POST /api/committees` (`committee:read/create`), `POST /api/committees/{id}/members`
+- `GET/POST /api/meetings` (`meeting:read/create`), `POST /api/meetings/{id}/attendance|conclude`
+- `POST /api/meetings/{id}/decisions` (`decision:create`) → `DecisionPublished`
+- `GET /api/decisions` (`decision:read`), `POST /api/decisions/{id}/actions` → `ActionAssigned`
+- `POST /api/decision-actions/{id}/advance` (`action:update`) → `ActionAdvanced`
+- `GET/POST /api/policies` (`policy:read/create`), `POST /api/policies/{id}/publish|acknowledge` (`policy:ack`), `GET /api/policies/{id}/pending`
+
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
 tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
 (`DomainEvents.Record`). OpenAPI at `/openapi/v1.json` (dev).
@@ -51,6 +59,11 @@ persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt`
 | ApprovalDecided | POST /api/approvals/{id}/decide | tenantId, approvalId, entityType, entityId, approved, decidedBy | notifications |
 | TaskCompleted | POST /api/tasks/{id}/complete | tenantId, taskId | analytics |
 | TaskBreached | SlaMonitor (1 min tick) | tenantId, taskId, title, assigneeId | notifications |
+| CommitteeCreated / CommitteeMemberAdded | POST /api/committees[/{id}/members] | tenantId, committeeId, personId | audit projector |
+| MeetingScheduled / MeetingConcluded | POST /api/meetings[/{id}/conclude] | tenantId, meetingId, committeeId, title | notifications (members) |
+| DecisionPublished | POST /api/meetings/{id}/decisions | tenantId, decisionId, meetingId, committeeId, text | notifications (members) |
+| ActionAssigned / ActionAdvanced | POST /api/decisions/{id}/actions[/advance] | tenantId, actionId, assigneeId, description | notifications (assignee) |
+| PolicyCreated / PolicyPublished / PolicyAcknowledged | POST /api/policies[/{id}/publish|/acknowledge] | tenantId, policyId, code | notifications (all staff on publish) |
 
 `OutboxEvents` is intentionally **exempt from RLS** (platform-level, like `Tenants`)
 so the relay reads all tenants; isolation is enforced by consumer-side `tenant_id` filtering.

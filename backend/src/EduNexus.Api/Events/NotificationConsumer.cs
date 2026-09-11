@@ -20,7 +20,8 @@ public sealed class NotificationConsumer(
 {
     private const string Queue = "edunexus.notifications";
     private static readonly string[] Keys =
-        ["RoleAssigned", "RoleRevoked", "CorrespondenceSubmitted", "ApprovalDecided", "TaskBreached"];
+        ["RoleAssigned", "RoleRevoked", "CorrespondenceSubmitted", "ApprovalDecided", "TaskBreached",
+         "MeetingScheduled", "DecisionPublished", "ActionAssigned", "PolicyPublished"];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -75,34 +76,71 @@ public sealed class NotificationConsumer(
         if (tenantId == Guid.Empty) return;
         using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(msg.Body.ToArray()));
         var root = doc.RootElement;
-        var (personId, title, body) = msg.RoutingKey switch
-        {
-            "RoleAssigned" => (GetGuid(root, "personId"),
-                $"Role assigned: {Get(root, "roleCode")}",
-                $"You were assigned role {Get(root, "roleCode")} (scope {Get(root, "scope")})."),
-            "RoleRevoked" => (GetGuid(root, "personId"),
-                $"Role revoked: {Get(root, "roleCode")}",
-                $"Your role {Get(root, "roleCode")} was revoked."),
-            "CorrespondenceSubmitted" => (GetGuid(root, "reviewerId"),
-                $"Review requested: {Get(root, "number")}",
-                $"Correspondence {Get(root, "number")} awaits your review."),
-            "ApprovalDecided" => (GetGuid(root, "decidedBy"),
-                $"Approval {(root.TryGetProperty("approved", out var ap) && ap.GetBoolean() ? "approved" : "rejected")}",
-                $"Approval {Get(root, "approvalId")} decided."),
-            "TaskBreached" => (GetGuid(root, "assigneeId"),
-                $"Task overdue: {Get(root, "title")}",
-                $"Task {Get(root, "title")} breached its SLA."),
-            _ => (Guid.Empty, "", ""),
-        };
-        if (personId == Guid.Empty || title == "") return;
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await TenantScope.BeginAsync(db, tenantId, ct);
-        db.Notifications.Add(new Notification(Guid.NewGuid(), tenantId, personId, title, body,
-            NotificationChannel.InApp, NotificationStatus.Sent, DateTimeOffset.UtcNow));
+        var now = DateTimeOffset.UtcNow;
+        void Notify(Guid personId, string title, string body) =>
+            db.Notifications.Add(new Notification(Guid.NewGuid(), tenantId, personId, title, body,
+                NotificationChannel.InApp, NotificationStatus.Sent, now));
+
+        switch (msg.RoutingKey)
+        {
+            case "RoleAssigned":
+                NotifyReq(root, "personId", $"Role assigned: {Get(root, "roleCode")}",
+                    $"You were assigned role {Get(root, "roleCode")} (scope {Get(root, "scope")}).", Notify);
+                break;
+            case "RoleRevoked":
+                NotifyReq(root, "personId", $"Role revoked: {Get(root, "roleCode")}",
+                    $"Your role {Get(root, "roleCode")} was revoked.", Notify);
+                break;
+            case "CorrespondenceSubmitted":
+                NotifyReq(root, "reviewerId", $"Review requested: {Get(root, "number")}",
+                    $"Correspondence {Get(root, "number")} awaits your review.", Notify);
+                break;
+            case "ApprovalDecided":
+                NotifyReq(root, "decidedBy",
+                    $"Approval {(root.TryGetProperty("approved", out var ap) && ap.GetBoolean() ? "approved" : "rejected")}",
+                    $"Approval {Get(root, "approvalId")} decided.", Notify);
+                break;
+            case "TaskBreached":
+                NotifyReq(root, "assigneeId", $"Task overdue: {Get(root, "title")}",
+                    $"Task {Get(root, "title")} breached its SLA.", Notify);
+                break;
+            case "MeetingScheduled":
+                foreach (var pid in await MemberIdsAsync(db, tenantId, GetGuid(root, "committeeId"), ct))
+                    Notify(pid, $"Meeting scheduled: {Get(root, "title")}", $"Meeting {Get(root, "title")} scheduled.");
+                break;
+            case "DecisionPublished":
+                foreach (var pid in await MemberIdsAsync(db, tenantId, GetGuid(root, "committeeId"), ct))
+                    Notify(pid, "Decision published", Get(root, "text"));
+                break;
+            case "ActionAssigned":
+                NotifyReq(root, "assigneeId", "Action assigned", Get(root, "description"), Notify);
+                break;
+            case "PolicyPublished":
+                var people = await db.People.Where(p => p.TenantId == tenantId && p.IsActive).Select(p => p.Id).ToListAsync(ct);
+                foreach (var pid in people)
+                    Notify(pid, $"New policy: {Get(root, "code")}", $"Policy {Get(root, "title")} requires acknowledgement.");
+                break;
+            default:
+                return;
+        }
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
     }
+
+    private static void NotifyReq(JsonElement root, string field, string title, string body, Action<Guid, string, string> notify)
+    {
+        var pid = GetGuid(root, field);
+        if (pid != Guid.Empty && title != "") notify(pid, title, body);
+    }
+
+    private static async Task<List<Guid>> MemberIdsAsync(AppDbContext db, Guid tenantId, Guid committeeId, CancellationToken ct) =>
+        committeeId == Guid.Empty
+            ? []
+            : await db.CommitteeMembers.Where(m => m.TenantId == tenantId && m.CommitteeId == committeeId)
+                .Select(m => m.PersonId).ToListAsync(ct);
 
     private static string Get(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) ? v.ToString() : "?";

@@ -485,6 +485,276 @@ notifs.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid?
     return Results.Ok(await q.OrderByDescending(n => n.CreatedAt).Take(100).ToListAsync(ct));
 });
 
+// ============================ R3 — Governance ============================
+
+var committees = app.MapGroup("/api/committees").WithTags("Committees").RequireAuthorization();
+committees.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("committee:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.Committees.Where(c => c.TenantId == tenantId).OrderBy(c => c.Code).ToListAsync(ct));
+});
+committees.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateCommitteeReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("committee:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
+        return Results.BadRequest(new { error = "Code and Name required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var c = new Committee(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Name.Trim(), true);
+    db.Committees.Add(c);
+    DomainEvents.Record(db, req.TenantId, "CommitteeCreated", "CommitteeCreated",
+        nameof(Committee), c.Id.ToString(),
+        payload: new { tenantId = req.TenantId, committeeId = c.Id, code = c.Code }, details: c.Code);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Committee code '{req.Code}' already exists in tenant." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/committees/{c.Id}", c);
+});
+committees.MapPost("/{id:guid}/members", async (AppDbContext db, HttpContext ctx, Guid id, AddMemberReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("committee:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Committees.AnyAsync(c => c.TenantId == req.TenantId && c.Id == id, ct))
+        return Results.NotFound(new { error = "Committee not found." });
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.PersonId, ct))
+        return Results.NotFound(new { error = "Person not found in tenant." });
+    var m = new CommitteeMember(Guid.NewGuid(), req.TenantId, id, req.PersonId, req.Role ?? "Member", DateTimeOffset.UtcNow);
+    db.CommitteeMembers.Add(m);
+    DomainEvents.Record(db, req.TenantId, "CommitteeMemberAdded", "CommitteeMemberAdded",
+        nameof(CommitteeMember), m.Id.ToString(),
+        payload: new { tenantId = req.TenantId, committeeId = id, personId = req.PersonId }, details: req.PersonId.ToString());
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = "Person already a member." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/committees/{id}/members/{m.Id}", m);
+});
+
+var meetings = app.MapGroup("/api/meetings").WithTags("Meetings").RequireAuthorization();
+meetings.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid? committeeId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("meeting:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var q = db.Meetings.Where(m => m.TenantId == tenantId);
+    if (committeeId.HasValue) q = q.Where(m => m.CommitteeId == committeeId.Value);
+    return Results.Ok(await q.OrderBy(m => m.StartsAt).ToListAsync(ct));
+});
+meetings.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateMeetingReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("meeting:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Title)) return Results.BadRequest(new { error = "Title required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Committees.AnyAsync(c => c.TenantId == req.TenantId && c.Id == req.CommitteeId, ct))
+        return Results.NotFound(new { error = "Committee not found." });
+    var m = new Meeting(Guid.NewGuid(), req.TenantId, req.CommitteeId, req.Title.Trim(), req.StartsAt, MeetingStatus.Scheduled, null);
+    db.Meetings.Add(m);
+    foreach (var (item, i) in (req.Agenda ?? []).Select((a, i) => (a, i)))
+        db.AgendaItems.Add(new AgendaItem(Guid.NewGuid(), req.TenantId, m.Id, i + 1, item.Title, item.Description));
+    DomainEvents.Record(db, req.TenantId, "MeetingScheduled", "MeetingScheduled",
+        nameof(Meeting), m.Id.ToString(),
+        payload: new { tenantId = req.TenantId, meetingId = m.Id, committeeId = req.CommitteeId, title = m.Title }, details: m.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/meetings/{m.Id}", m);
+});
+meetings.MapPost("/{id:guid}/attendance", async (AppDbContext db, HttpContext ctx, Guid id, RecordAttendanceReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("meeting:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<AttendanceStatus>(req.Status, true, out var st))
+        return Results.BadRequest(new { error = "Status must be Present|Absent|Excused." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Meetings.AnyAsync(m => m.TenantId == req.TenantId && m.Id == id, ct))
+        return Results.NotFound(new { error = "Meeting not found." });
+    var existing = await db.Attendances.FirstOrDefaultAsync(a => a.TenantId == req.TenantId && a.MeetingId == id && a.PersonId == req.PersonId, ct);
+    if (existing is null)
+        db.Attendances.Add(new Attendance(Guid.NewGuid(), req.TenantId, id, req.PersonId, st));
+    else
+        db.Entry(existing).CurrentValues.SetValues(existing with { Status = st });
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok();
+});
+meetings.MapPost("/{id:guid}/conclude", async (AppDbContext db, HttpContext ctx, Guid id, ConcludeMeetingReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("meeting:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var m = await db.Meetings.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (m is null) return Results.NotFound(new { error = "Meeting not found." });
+    if (m.Status == MeetingStatus.Concluded) return Results.Conflict(new { error = "Meeting already concluded." });
+    db.Entry(m).CurrentValues.SetValues(m with { Status = MeetingStatus.Concluded, Minutes = req.Minutes });
+    DomainEvents.Record(db, req.TenantId, "MeetingConcluded", "MeetingConcluded",
+        nameof(Meeting), m.Id.ToString(),
+        payload: new { tenantId = req.TenantId, meetingId = m.Id }, details: m.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(m);
+});
+meetings.MapPost("/{id:guid}/decisions", async (AppDbContext db, HttpContext ctx, Guid id, CreateDecisionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("decision:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Text)) return Results.BadRequest(new { error = "Text required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var m = await db.Meetings.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (m is null) return Results.NotFound(new { error = "Meeting not found." });
+    if (m.Status == MeetingStatus.Cancelled) return Results.Conflict(new { error = "Meeting cancelled." });
+    // BP-ACD-014: Decision → immediate Publication (approval path is R2 workflow when needed).
+    var d = new Decision(Guid.NewGuid(), req.TenantId, id, req.Text.Trim(), DecisionStatus.Published, DateTimeOffset.UtcNow);
+    db.Decisions.Add(d);
+    DomainEvents.Record(db, req.TenantId, "DecisionPublished", "DecisionPublished",
+        nameof(Decision), d.Id.ToString(),
+        payload: new { tenantId = req.TenantId, decisionId = d.Id, meetingId = id, committeeId = m.CommitteeId, text = d.Text }, details: d.Text[..Math.Min(80, d.Text.Length)]);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/decisions/{d.Id}", d);
+});
+
+var decisions = app.MapGroup("/api/decisions").WithTags("Decisions").RequireAuthorization();
+decisions.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid? meetingId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("decision:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var q = db.Decisions.Where(d => d.TenantId == tenantId);
+    if (meetingId.HasValue) q = q.Where(d => d.MeetingId == meetingId.Value);
+    return Results.Ok(await q.OrderByDescending(d => d.PublishedAt).ToListAsync(ct));
+});
+decisions.MapPost("/{id:guid}/actions", async (AppDbContext db, HttpContext ctx, Guid id, CreateDecisionActionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("decision:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Description)) return Results.BadRequest(new { error = "Description required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Decisions.AnyAsync(d => d.TenantId == req.TenantId && d.Id == id, ct))
+        return Results.NotFound(new { error = "Decision not found." });
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.AssigneeId, ct))
+        return Results.NotFound(new { error = "Assignee not found in tenant." });
+    var a = new DecisionAction(Guid.NewGuid(), req.TenantId, id, req.AssigneeId, req.Description.Trim(),
+        DecisionActionStatus.Assigned, req.DueAt ?? DateTimeOffset.UtcNow.AddDays(14));
+    db.DecisionActions.Add(a);
+    DomainEvents.Record(db, req.TenantId, "ActionAssigned", "ActionAssigned",
+        nameof(DecisionAction), a.Id.ToString(),
+        payload: new { tenantId = req.TenantId, actionId = a.Id, decisionId = id, assigneeId = req.AssigneeId, description = a.Description }, details: a.Description);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/decision-actions/{a.Id}", a);
+});
+
+var actions = app.MapGroup("/api/decision-actions").WithTags("DecisionActions").RequireAuthorization();
+actions.MapPost("/{id:guid}/advance", async (AppDbContext db, HttpContext ctx, Guid id, AdvanceActionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("action:update")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<DecisionActionStatus>(req.Status, true, out var st))
+        return Results.BadRequest(new { error = "Status must be Assigned|InProgress|Done|Verified." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var a = await db.DecisionActions.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (a is null) return Results.NotFound(new { error = "Action not found." });
+    db.Entry(a).CurrentValues.SetValues(a with { Status = st });
+    DomainEvents.Record(db, req.TenantId, "ActionAdvanced", "ActionAdvanced",
+        nameof(DecisionAction), a.Id.ToString(),
+        payload: new { tenantId = req.TenantId, actionId = a.Id, status = st.ToString() }, details: st.ToString());
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(a);
+});
+
+var policies = app.MapGroup("/api/policies").WithTags("Policies").RequireAuthorization();
+policies.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("policy:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.Policies.Where(p => p.TenantId == tenantId).OrderBy(p => p.Code).ToListAsync(ct));
+});
+policies.MapPost("/", async (AppDbContext db, HttpContext ctx, CreatePolicyReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("policy:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Title))
+        return Results.BadRequest(new { error = "Code and Title required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var p = new Policy(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Title.Trim(), req.Content ?? "", PolicyStatus.Draft, 1);
+    db.Policies.Add(p);
+    DomainEvents.Record(db, req.TenantId, "PolicyCreated", "PolicyCreated",
+        nameof(Policy), p.Id.ToString(),
+        payload: new { tenantId = req.TenantId, policyId = p.Id, code = p.Code }, details: p.Code);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Policy code '{req.Code}' already exists in tenant." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/policies/{p.Id}", p);
+});
+policies.MapPost("/{id:guid}/publish", async (AppDbContext db, HttpContext ctx, Guid id, PublishPolicyReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("policy:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var p = await db.Policies.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (p is null) return Results.NotFound(new { error = "Policy not found." });
+    if (p.Status == PolicyStatus.Published) return Results.Conflict(new { error = "Policy already published." });
+    db.Entry(p).CurrentValues.SetValues(p with { Status = PolicyStatus.Published });
+    DomainEvents.Record(db, req.TenantId, "PolicyPublished", "PolicyPublished",
+        nameof(Policy), p.Id.ToString(),
+        payload: new { tenantId = req.TenantId, policyId = p.Id, code = p.Code, title = p.Title }, details: p.Code);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(p);
+});
+policies.MapPost("/{id:guid}/acknowledge", async (AppDbContext db, HttpContext ctx, Guid id, AcknowledgePolicyReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("policy:ack")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var p = await db.Policies.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (p is null) return Results.NotFound(new { error = "Policy not found." });
+    if (p.Status != PolicyStatus.Published) return Results.Conflict(new { error = "Only published policies can be acknowledged." });
+    if (!await db.People.AnyAsync(x => x.TenantId == req.TenantId && x.Id == req.PersonId, ct))
+        return Results.NotFound(new { error = "Person not found in tenant." });
+    var ack = new PolicyAcknowledgement(Guid.NewGuid(), req.TenantId, id, req.PersonId, DateTimeOffset.UtcNow);
+    db.PolicyAcknowledgements.Add(ack);
+    DomainEvents.Record(db, req.TenantId, "PolicyAcknowledged", "PolicyAcknowledged",
+        nameof(PolicyAcknowledgement), ack.Id.ToString(),
+        payload: new { tenantId = req.TenantId, policyId = id, personId = req.PersonId }, details: id.ToString());
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = "Already acknowledged." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/policies/{id}/acks/{ack.Id}", ack);
+});
+policies.MapGet("/{id:guid}/pending", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("policy:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    if (!await db.Policies.AnyAsync(p => p.TenantId == tenantId && p.Id == id, ct))
+        return Results.NotFound(new { error = "Policy not found." });
+    var acked = await db.PolicyAcknowledgements
+        .Where(a => a.TenantId == tenantId && a.PolicyId == id)
+        .Select(a => a.PersonId).ToListAsync(ct);
+    var pending = await db.People
+        .Where(p => p.TenantId == tenantId && p.IsActive && !acked.Contains(p.Id))
+        .Select(p => new { p.Id, p.FullName })
+        .ToListAsync(ct);
+    return Results.Ok(pending);
+});
+
 app.Run();
 
 public sealed record CreateTenantReq(string Slug, string Name);
@@ -499,3 +769,15 @@ public sealed record CreateCorrespondenceReq(Guid TenantId, string Type, string 
 public sealed record SubmitCorrespondenceReq(Guid TenantId, Guid ReviewerId);
 public sealed record DecideApprovalReq(Guid TenantId, Guid DecidedBy, bool Approve, string? Comment);
 public sealed record CompleteTaskReq(Guid TenantId);
+public sealed record CreateCommitteeReq(Guid TenantId, string Code, string Name);
+public sealed record AddMemberReq(Guid TenantId, Guid PersonId, string? Role);
+public sealed record AgendaReq(string Title, string? Description);
+public sealed record CreateMeetingReq(Guid TenantId, Guid CommitteeId, string Title, DateTimeOffset StartsAt, AgendaReq[]? Agenda);
+public sealed record RecordAttendanceReq(Guid TenantId, Guid PersonId, string Status);
+public sealed record ConcludeMeetingReq(Guid TenantId, string? Minutes);
+public sealed record CreateDecisionReq(Guid TenantId, string Text);
+public sealed record CreateDecisionActionReq(Guid TenantId, Guid AssigneeId, string Description, DateTimeOffset? DueAt);
+public sealed record AdvanceActionReq(Guid TenantId, string Status);
+public sealed record CreatePolicyReq(Guid TenantId, string Code, string Title, string? Content);
+public sealed record PublishPolicyReq(Guid TenantId);
+public sealed record AcknowledgePolicyReq(Guid TenantId, Guid PersonId);
