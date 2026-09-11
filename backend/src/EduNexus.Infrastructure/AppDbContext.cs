@@ -17,6 +17,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AuthorityDelegation> AuthorityDelegations => Set<AuthorityDelegation>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+    public DbSet<Correspondence> Correspondences => Set<Correspondence>();
+    public DbSet<Correspondent> Correspondents => Set<Correspondent>();
+    public DbSet<Approval> Approvals => Set<Approval>();
+    public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<TenantSequence> TenantSequences => Set<TenantSequence>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -88,6 +94,50 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => new { x.TenantId, x.OccurredAt });
             e.Property(x => x.EventType).HasMaxLength(100).IsRequired();
             e.Property(x => x.Payload).HasColumnType("jsonb").IsRequired();
+        });
+        b.Entity<Correspondence>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Number }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.Status });
+            e.Property(x => x.Number).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Type).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Priority).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<Correspondent>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CorrespondenceId });
+        });
+        b.Entity<Approval>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Status });
+            e.HasIndex(x => new { x.EntityType, x.EntityId });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Priority).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<WorkTask>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Status });
+            e.HasIndex(x => new { x.TenantId, x.AssigneeId });
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<Notification>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PersonId, x.Status });
+            e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Channel).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<TenantSequence>(e =>
+        {
+            e.HasKey(x => new { x.TenantId, x.Scope });
         });
     }
 }

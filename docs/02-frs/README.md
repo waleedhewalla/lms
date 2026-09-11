@@ -32,6 +32,27 @@ Actor: user with `role:create`. Behavior: validate code unique per tenant → pe
 AC: Given duplicate code in tenant When POST /api/roles Then 409.
 
 ### FR-DIR-001 — Register Person ✅ implemented (Postgres)
+
+## Release 2 FRs
+
+### FR-COR-001 — Create Correspondence ✅ implemented
+Actor: authorized employee with `correspondence:create`. Preconditions: authenticated,
+tenant active, author exists. Behavior: 1) select type 2) form generated 3–8) recipient/
+subject/content/attachments-meta/priority/confidentiality 9) submit draft 10) validate
+11) number reserved at creation `CORR-yyyy-nnnnnn` (unique per tenant, atomic sequence)
+12) submit starts approval workflow 13) audit + outbox 14) reviewer notified (broker→consumer→in-app).
+Rules: confidential needs `correspondence:confidential` (create + list filtering);
+High/Urgent → Accelerated SLA (due +2d, else +5d); submit only from Draft (409 otherwise).
+ACs covered by `Correspondence_FullFlow_SubmitDecide_Notifies` + `Correspondence_Confidential_Gated`.
+
+### FR-APR-001 — Decide Approval ✅ implemented
+Actor: assignee with `approval:decide` (assignee match enforced, 403 otherwise).
+Behavior: Pending→Approved/Rejected + comment; linked correspondence status follows;
+linked task marked Done; `ApprovalDecided` event. Double-decide → 409.
+
+### FR-TSK-001 — Complete Task ✅ / FR-SLA-001 — Breach Detection ✅
+Tasks auto-created on submit; `SlaMonitor` marks overdue Open/InProgress tasks Breached
++ `TaskBreached` event; breaches queryable at `GET /api/sla/breaches`.
 Actor: authorized employee. Behavior: validate tenant → create Employee/Student → `PersonCreated` audit. PG migration pending (see roadmap).
 
 Full FRS target 150–250 pages; add FR-COR-001 etc. in Release 2.

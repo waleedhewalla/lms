@@ -97,3 +97,52 @@ public sealed class OutboxEvent
         DispatchedAt = dispatchedAt;
     }
 }
+
+// ============================ R2 — Communication & Workflow ============================
+
+public enum CorrespondenceType { Incoming, Outgoing, Internal }
+public enum CorrespondencePriority { Normal, High, Urgent }
+public enum CorrespondenceStatus { Draft, Submitted, InReview, Approved, Rejected, Archived }
+
+public sealed record Correspondence(
+    Guid Id, Guid TenantId, string Number, CorrespondenceType Type,
+    string Subject, string Content, Guid AuthorId, CorrespondencePriority Priority,
+    bool IsConfidential, CorrespondenceStatus Status, DateTimeOffset CreatedAt)
+{
+    public static Correspondence Create(Guid tenantId, CorrespondenceType type, string subject,
+        string content, Guid authorId, CorrespondencePriority priority, bool isConfidential)
+    {
+        if (tenantId == Guid.Empty) throw new ArgumentException("Tenant required.", nameof(tenantId));
+        if (string.IsNullOrWhiteSpace(subject)) throw new ArgumentException("Subject required.", nameof(subject));
+        if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("Content required.", nameof(content));
+        // Number assigned by the store (unique per tenant). Placeholder replaced on insert.
+        return new Correspondence(Guid.NewGuid(), tenantId, "", type, subject.Trim(), content,
+            authorId, priority, isConfidential, CorrespondenceStatus.Draft, DateTimeOffset.UtcNow);
+    }
+}
+
+public sealed record Correspondent(Guid Id, Guid TenantId, Guid CorrespondenceId, Guid? PersonId, string DisplayName, bool IsExternal);
+
+public enum ApprovalStatus { Pending, Approved, Rejected, Cancelled }
+public enum ApprovalPriority { Normal, Accelerated }
+
+public sealed record Approval(
+    Guid Id, Guid TenantId, string EntityType, Guid EntityId,
+    Guid AssigneeId, ApprovalStatus Status, ApprovalPriority Priority,
+    DateTimeOffset DueAt, DateTimeOffset? DecidedAt, Guid? DecidedBy, string? Comment);
+
+public enum WorkTaskStatus { Open, InProgress, Done, Breached }
+
+public sealed record WorkTask(
+    Guid Id, Guid TenantId, string Title, Guid AssigneeId, Guid? ApprovalId,
+    WorkTaskStatus Status, DateTimeOffset DueAt, DateTimeOffset CreatedAt);
+
+public enum NotificationChannel { InApp, Email, Sms }
+public enum NotificationStatus { Queued, Sent, Failed }
+
+public sealed record Notification(
+    Guid Id, Guid TenantId, Guid PersonId, string Title, string Body,
+    NotificationChannel Channel, NotificationStatus Status, DateTimeOffset CreatedAt);
+
+/// <summary>Per-tenant monotonic counters (correspondence numbers, request numbers…). Row-locked per transaction.</summary>
+public sealed record TenantSequence(Guid TenantId, string Scope, long NextValue);

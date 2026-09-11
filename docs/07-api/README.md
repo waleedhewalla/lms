@@ -18,6 +18,18 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 - `POST /api/roles/revoke` — auth + `role:assign`, 204; writes `RoleRevoked` audit
 - `GET /api/roles/assignments?tenantId=&personId=` — auth + `role:read`
 
+## R2 implemented
+- `GET /api/correspondence?tenantId=&status=` (`correspondence:read`; confidential filtered without `correspondence:confidential`)
+- `POST /api/correspondence` (`correspondence:create`; reserves `CORR-yyyy-nnnnnn`)
+- `POST /api/correspondence/{id}/submit` (Draft→Submitted + approval + task + event)
+- `GET /api/approvals?tenantId=&assigneeId=&status=` (`approval:read`)
+- `POST /api/approvals/{id}/decide` (`approval:decide`, assignee-only, 409 double-decide)
+- `GET /api/tasks?tenantId=&assigneeId=` (`task:read`) / `POST /api/tasks/{id}/complete` (`task:update`)
+- `GET /api/sla/breaches?tenantId=` (`approval:read`)
+- `GET /api/notifications?tenantId=&personId=` (`notification:read`; written by `NotificationConsumer`)
+
+Enums serialize as strings (JsonStringEnumConverter).
+
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
 tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
 (`DomainEvents.Record`). OpenAPI at `/openapi/v1.json` (dev).
@@ -34,6 +46,11 @@ persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt`
 | RoleCreated | POST /api/roles | tenantId, roleId, code, permissions | audit projector |
 | RoleAssigned | POST /api/roles/assign | tenantId, personId, roleId, roleCode, scope | notifications, access cache |
 | RoleRevoked | POST /api/roles/revoke | tenantId, personId, roleCode | notifications, access cache |
+| CorrespondenceCreated | POST /api/correspondence | tenantId, correspondenceId, number | audit projector |
+| CorrespondenceSubmitted | POST /api/correspondence/{id}/submit | tenantId, correspondenceId, number, reviewerId, approvalId | notifications |
+| ApprovalDecided | POST /api/approvals/{id}/decide | tenantId, approvalId, entityType, entityId, approved, decidedBy | notifications |
+| TaskCompleted | POST /api/tasks/{id}/complete | tenantId, taskId | analytics |
+| TaskBreached | SlaMonitor (1 min tick) | tenantId, taskId, title, assigneeId | notifications |
 
 `OutboxEvents` is intentionally **exempt from RLS** (platform-level, like `Tenants`)
 so the relay reads all tenants; isolation is enforced by consumer-side `tenant_id` filtering.

@@ -142,6 +142,116 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Correspondence_FullFlow_SubmitDecide_Notifies()
+    {
+        var perms = AllPerms.Concat(["correspondence:create", "correspondence:read", "correspondence:confidential",
+            "approval:read", "approval:decide", "task:read", "task:update", "notification:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Corr Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        async Task<Guid> MkPerson(string name)
+        {
+            var r = await client.PostAsJsonAsync("/api/people",
+                new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null });
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return IdOf(await r.Content.ReadFromJsonAsync<JsonElement>());
+        }
+        var author = await MkPerson("Karim Author");
+        var reviewer = await MkPerson("Rana Reviewer");
+
+        // FR-COR-001: create (number reserved, draft)
+        var create = await client.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant, type = "Internal", subject = "Budget memo", content = "Please review.",
+            authorId = author, priority = "High", isConfidential = false,
+            recipients = new[] { new { personId = reviewer.ToString(), displayName = "Rana", isExternal = false } },
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var corr = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.StartsWith("CORR-", corr.GetProperty("number").GetString());
+        Assert.Equal("Draft", corr.GetProperty("status").GetString());
+        var corrId = corr.GetProperty("id").GetGuid();
+
+        // submit → approval (accelerated, due +2d) + task + event
+        var submit = await client.PostAsJsonAsync($"/api/correspondence/{corrId}/submit",
+            new { tenantId = tenant, reviewerId = reviewer });
+        Assert.Equal(HttpStatusCode.OK, submit.StatusCode);
+        var approvalId = (await submit.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var resubmit = await client.PostAsJsonAsync($"/api/correspondence/{corrId}/submit",
+            new { tenantId = tenant, reviewerId = reviewer });
+        Assert.Equal(HttpStatusCode.Conflict, resubmit.StatusCode);
+
+        var pending = await client.GetFromJsonAsync<JsonElement>($"/api/approvals?tenantId={tenant}&assigneeId={reviewer}&status=Pending");
+        Assert.Equal(1, pending.GetArrayLength());
+        Assert.Equal("Accelerated", pending[0].GetProperty("priority").GetString());
+        var tasks = await client.GetFromJsonAsync<JsonElement>($"/api/tasks?tenantId={tenant}&assigneeId={reviewer}");
+        Assert.Equal(1, tasks.GetArrayLength());
+
+        // wrong decider → 403; right decider approves
+        var stranger = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+            new { tenantId = tenant, decidedBy = author, approve = true, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.Forbidden, stranger.StatusCode);
+        var decide = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+            new { tenantId = tenant, decidedBy = reviewer, approve = true, comment = "Looks good" });
+        Assert.Equal(HttpStatusCode.OK, decide.StatusCode);
+        var again = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+            new { tenantId = tenant, decidedBy = reviewer, approve = true, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+
+        var list = await client.GetFromJsonAsync<JsonElement>($"/api/correspondence?tenantId={tenant}");
+        Assert.Equal("Approved", list.EnumerateArray().First(e => e.GetProperty("id").GetGuid() == corrId).GetProperty("status").GetString());
+
+        // reviewer got an in-app notification via broker → consumer → DB (poll ≤ 25s)
+        var deadline = DateTime.UtcNow.AddSeconds(25);
+        while (DateTime.UtcNow < deadline)
+        {
+            var notifs = await client.GetFromJsonAsync<JsonElement>($"/api/notifications?tenantId={tenant}&personId={reviewer}");
+            if (notifs.EnumerateArray().Any(n => n.GetProperty("title").GetString()!.Contains("Review requested")))
+                return;
+            await Task.Delay(500);
+        }
+        Assert.Fail("Reviewer notification not materialized within 25s");
+    }
+
+    [Fact]
+    public async Task Correspondence_Confidential_Gated()
+    {
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), ["tenant:create", "person:create", "correspondence:create", "correspondence:read", "correspondence:confidential"]));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Conf Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var plain = factory.CreateClient();
+        Auth(plain, Mint(tenant, ["person:create", "correspondence:create", "correspondence:read"])); // no confidential perm
+        var author = IdOf(await (await plain.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Sam Secret", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var denied = await plain.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant, type = "Internal", subject = "Secret", content = "Shh",
+            authorId = author, priority = "Normal", isConfidential = true, recipients = Array.Empty<object>(),
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        var elevated = factory.CreateClient();
+        Auth(elevated, Mint(tenant, ["person:create", "correspondence:create", "correspondence:read", "correspondence:confidential"]));
+        var ok = await elevated.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant, type = "Internal", subject = "Secret", content = "Shh",
+            authorId = author, priority = "Normal", isConfidential = true, recipients = Array.Empty<object>(),
+        });
+        Assert.Equal(HttpStatusCode.Created, ok.StatusCode);
+
+        var visibleToPlain = await plain.GetFromJsonAsync<JsonElement>($"/api/correspondence?tenantId={tenant}");
+        Assert.Equal(0, visibleToPlain.GetArrayLength());
+        var visibleToElevated = await elevated.GetFromJsonAsync<JsonElement>($"/api/correspondence?tenantId={tenant}");
+        Assert.Equal(1, visibleToElevated.GetArrayLength());
+    }
+
+    [Fact]
     public async Task AssignRole_WritesOutbox_And_RelayDispatches()
     {
         // Requires RabbitMQ on localhost:5673 (edunexus-rabbitmq). The test host
