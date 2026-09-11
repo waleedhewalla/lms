@@ -1,6 +1,9 @@
 using System.Text;
 using EduNexus.Api.Auth;
 using EduNexus.Api.Events;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using EduNexus.Foundation;
 using EduNexus.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -27,6 +30,20 @@ var authCfg = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOpti
 builder.Services.AddSingleton<DevTokenService>();
 builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(RabbitMqOptions.Section));
 builder.Services.AddHostedService<EventRelay>();
+
+// --- Observability: traces (OTLP, collector optional) + Prometheus metrics on /metrics ---
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("edunexus-api", serviceVersion: "1.0.0-R1"))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddEntityFrameworkCoreInstrumentation()
+        .AddOtlpExporter())
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddPrometheusExporter());
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
@@ -72,6 +89,7 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthChecks("/health");
+app.MapPrometheusScrapingEndpoint();
 
 app.MapGet("/", () => Results.Ok(new { name = "EduNexus OS V2 API", release = "R1-Foundation", docs = "/openapi/v1.json" }));
 
