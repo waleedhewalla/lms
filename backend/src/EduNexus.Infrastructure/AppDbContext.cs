@@ -16,6 +16,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
     public DbSet<AuthorityDelegation> AuthorityDelegations => Set<AuthorityDelegation>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -79,6 +80,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.At });
             e.HasIndex(x => new { x.EntityType, x.EntityId });
+        });
+        b.Entity<OutboxEvent>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.DispatchedAt);
+            e.HasIndex(x => new { x.TenantId, x.OccurredAt });
+            e.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Payload).HasColumnType("jsonb").IsRequired();
         });
     }
 }

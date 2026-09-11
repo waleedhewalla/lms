@@ -32,6 +32,12 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U edunexus"
           --health-interval 5s --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports: ['5673:5672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

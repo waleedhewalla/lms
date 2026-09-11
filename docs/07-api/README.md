@@ -19,7 +19,24 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 - `GET /api/roles/assignments?tenantId=&personId=` — auth + `role:read`
 
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
-tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent`. OpenAPI at `/openapi/v1.json` (dev).
+tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
+(`DomainEvents.Record`). OpenAPI at `/openapi/v1.json` (dev).
+
+## Events (R1 live via outbox → RabbitMQ)
+Exchange `edunexus.events` (topic, durable); routing key = event type; `tenant_id` header;
+persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt` post-publish).
+
+| Event | Producer endpoint | Payload fields | Consumers (planned) |
+|---|---|---|---|
+| TenantCreated | POST /api/tenants | tenantId, slug | audit projector, notifications |
+| OrganizationCreated | POST /api/organizations | tenantId, org id, code | audit projector |
+| PersonCreated | POST /api/people | tenantId, person id | directory sync, notifications |
+| RoleCreated | POST /api/roles | tenantId, roleId, code, permissions | audit projector |
+| RoleAssigned | POST /api/roles/assign | tenantId, personId, roleId, roleCode, scope | notifications, access cache |
+| RoleRevoked | POST /api/roles/revoke | tenantId, personId, roleCode | notifications, access cache |
+
+`OutboxEvents` is intentionally **exempt from RLS** (platform-level, like `Tenants`)
+so the relay reads all tenants; isolation is enforced by consumer-side `tenant_id` filtering.
 
 ## Integrations
 SIS/HR/Finance/ERP bi-di API+events; Teams Graph; Email SMTP/API in+out; SMS out; Identity OIDC/SAML/LDAP in; Zoom/Workspace bi-di. Connectors in R5.

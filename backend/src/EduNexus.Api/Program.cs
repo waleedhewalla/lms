@@ -1,5 +1,6 @@
 using System.Text;
 using EduNexus.Api.Auth;
+using EduNexus.Api.Events;
 using EduNexus.Foundation;
 using EduNexus.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -24,6 +25,8 @@ builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(conn));
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.Section));
 var authCfg = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
 builder.Services.AddSingleton<DevTokenService>();
+builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(RabbitMqOptions.Section));
+builder.Services.AddHostedService<EventRelay>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
@@ -105,8 +108,8 @@ tenants.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateTenantReq re
     // Audit row carries the new tenant id, so scope the tx to it (RLS WITH CHECK).
     await using var scope = await TenantScope.BeginAsync(db, tenant.Id, ct);
     db.Tenants.Add(tenant);
-    db.AuditEvents.Add(new AuditEvent(Guid.NewGuid(), tenant.Id, "TenantCreated",
-        nameof(Tenant), tenant.Id.ToString(), null, DateTimeOffset.UtcNow, $"slug={tenant.Slug}"));
+    DomainEvents.Record(db, tenant.Id, "TenantCreated", "TenantCreated",
+        nameof(Tenant), tenant.Id.ToString(), details: $"slug={tenant.Slug}");
     try { await db.SaveChangesAsync(ct); }
     catch (DbUpdateException ex) when (IsUniqueConflict(ex))
     {
@@ -136,8 +139,8 @@ orgs.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateOrgReq req, Can
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
     db.Organizations.Add(org);
-    db.AuditEvents.Add(new AuditEvent(Guid.NewGuid(), req.TenantId, "OrganizationCreated",
-        nameof(Organization), org.Id.ToString(), null, DateTimeOffset.UtcNow, req.Code));
+    DomainEvents.Record(db, req.TenantId, "OrganizationCreated", "OrganizationCreated",
+        nameof(Organization), org.Id.ToString(), details: req.Code);
     try { await db.SaveChangesAsync(ct); }
     catch (DbUpdateException ex) when (IsUniqueConflict(ex))
     {
@@ -172,8 +175,8 @@ people.MapPost("/", async (AppDbContext db, HttpContext ctx, CreatePersonReq req
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
     db.People.Add(person);
-    db.AuditEvents.Add(new AuditEvent(Guid.NewGuid(), req.TenantId, "PersonCreated",
-        nameof(Person), person.Id.ToString(), null, DateTimeOffset.UtcNow, req.FullName));
+    DomainEvents.Record(db, req.TenantId, "PersonCreated", "PersonCreated",
+        nameof(Person), person.Id.ToString(), details: req.FullName);
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
     return Results.Created("/api/people", person);
@@ -211,8 +214,10 @@ roles.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateRoleReq req, C
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
     db.Roles.Add(role);
-    db.AuditEvents.Add(new AuditEvent(Guid.NewGuid(), req.TenantId, "RoleCreated",
-        nameof(Role), role.Id.ToString(), null, DateTimeOffset.UtcNow, req.Code));
+    DomainEvents.Record(db, req.TenantId, "RoleCreated", "RoleCreated",
+        nameof(Role), role.Id.ToString(),
+        payload: new { tenantId = req.TenantId, roleId = role.Id, code = role.Code, permissions = role.Permissions },
+        details: req.Code);
     try { await db.SaveChangesAsync(ct); }
     catch (DbUpdateException ex) when (IsUniqueConflict(ex))
     {
@@ -241,9 +246,10 @@ roles.MapPost("/assign", async (AppDbContext db, HttpContext ctx, AssignRoleReq 
     var assignment = new RoleAssignment(Guid.NewGuid(), req.TenantId, req.PersonId, role.Id,
         req.Scope ?? $"tenant:{req.TenantId}", req.ExpiresAt, DateTimeOffset.UtcNow);
     db.RoleAssignments.Add(assignment);
-    db.AuditEvents.Add(new AuditEvent(Guid.NewGuid(), req.TenantId, "RoleAssigned",
-        nameof(RoleAssignment), assignment.Id.ToString(), null, DateTimeOffset.UtcNow,
-        $"{req.PersonId}->{role.Code}"));
+    DomainEvents.Record(db, req.TenantId, "RoleAssigned", "RoleAssigned",
+        nameof(RoleAssignment), assignment.Id.ToString(),
+        payload: new { tenantId = req.TenantId, personId = req.PersonId, roleId = role.Id, roleCode = role.Code, scope = assignment.Scope },
+        details: $"{req.PersonId}->{role.Code}");
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
     return Results.Created($"/api/roles/assignments/{assignment.Id}", assignment);
@@ -261,9 +267,10 @@ roles.MapPost("/revoke", async (AppDbContext db, HttpContext ctx, RevokeRoleReq 
         .FirstOrDefaultAsync(ct);
     if (assignment is null) return Results.NotFound(new { error = "Assignment not found." });
     db.RoleAssignments.Remove(assignment);
-    db.AuditEvents.Add(new AuditEvent(Guid.NewGuid(), req.TenantId, "RoleRevoked",
-        nameof(RoleAssignment), assignment.Id.ToString(), null, DateTimeOffset.UtcNow,
-        $"{req.PersonId}-/->{req.RoleCode}"));
+    DomainEvents.Record(db, req.TenantId, "RoleRevoked", "RoleRevoked",
+        nameof(RoleAssignment), assignment.Id.ToString(),
+        payload: new { tenantId = req.TenantId, personId = req.PersonId, roleCode = req.RoleCode },
+        details: $"{req.PersonId}-/->{req.RoleCode}");
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
     return Results.NoContent();

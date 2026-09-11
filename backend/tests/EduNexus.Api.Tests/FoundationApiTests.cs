@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using EduNexus.Api.Auth;
+using EduNexus.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EduNexus.Api.Tests;
@@ -137,5 +139,49 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Auth(client, Mint(Guid.NewGuid(), ["role:read"])); // no role:create
         var res = await client.PostAsJsonAsync("/api/roles", new { tenantId = Guid.NewGuid(), code = "x", name = "X", permissions = Array.Empty<string>() });
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task AssignRole_WritesOutbox_And_RelayDispatches()
+    {
+        // Requires RabbitMQ on localhost:5673 (edunexus-rabbitmq). The test host
+        // runs EventRelay, so a dispatched row proves broker publish end-to-end.
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid()));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Outbox Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant));
+        var person = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Omar Relay", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var rc = await client.PostAsJsonAsync("/api/roles",
+            new { tenantId = tenant, code = "relay.role", name = "Relay", permissions = Array.Empty<string>() });
+        Assert.Equal(HttpStatusCode.Created, rc.StatusCode);
+        var assign = await client.PostAsJsonAsync("/api/roles/assign",
+            new { tenantId = tenant, personId = person, roleCode = "relay.role" });
+        Assert.Equal(HttpStatusCode.Created, assign.StatusCode);
+
+        // outbox row exists atomically with the assignment
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.OutboxEvents.FirstOrDefaultAsync(
+                e => e.TenantId == tenant && e.EventType == "RoleAssigned");
+            Assert.NotNull(row);
+            Assert.Contains("relay.role", row.Payload);
+        }
+
+        // relay publishes within a few ticks (poll 2s) and stamps DispatchedAt
+        var deadline = DateTime.UtcNow.AddSeconds(25);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var done = await db.OutboxEvents.AnyAsync(
+                e => e.TenantId == tenant && e.EventType == "RoleAssigned" && e.DispatchedAt != null);
+            if (done) return;
+            await Task.Delay(500);
+        }
+        Assert.Fail("EventRelay did not dispatch RoleAssigned within 25s (is RabbitMQ up on :5673?)");
     }
 }
