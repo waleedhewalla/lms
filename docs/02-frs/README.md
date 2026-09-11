@@ -69,6 +69,30 @@ Assigned→InProgress→Done→Verified. Covered by `Governance_FullChain_Meetin
 ### FR-GOV-003 — Policy Publish & Acknowledge ✅ implemented
 Draft→Published (double-publish → 409); per-person acknowledge (double-ack → 409);
 `GET /api/policies/{id}/pending` lists active staff without ack (compliance view).
+
+## Release 4 FRs
+
+### FR-DOC-001 — Document Versioning ✅ implemented
+Draft → versions (objectKey in S3/MinIO via presigned PUT URL, sha256 recorded) →
+optional publish on version add. `GET .../download-url` mints presigned GET.
+Covered by `Intelligence_Documents_Search_Analytics_Quality_Strategy`.
+
+### FR-SRH-001 — Unified Search ✅ implemented
+`GET /api/search?q=&tenantId=` (min 2 chars) across correspondence/people/decisions/
+documents/policies with pg_trgm GIN indexes; confidential correspondence excluded
+without `correspondence:confidential`. OpenSearch sync is the R5 scale path.
+
+### FR-ANL-001 — Executive Overview ✅ implemented
+`GET /api/analytics/overview` aggregates correspondence-by-status, pending/breached
+approvals, open/breached tasks, decisions, open actions, policy ack rate.
+
+### FR-QA-001 — Accreditation Evidence Chain ✅ implemented
+Standard → Criterion → Evidence (polymorphic entity link) → Finding (severity) →
+CorrectiveAction (assignee + due). Each step validated + audited + evented.
+
+### FR-STR-001 — Strategy & KPIs ✅ implemented
+Plan → Objective (unique code) → KPI (target/current/unit) → readings append via
+`POST /api/strategy/kpis/{id}/reading` with `KpiUpdated` event.
 Actor: authorized employee. Behavior: validate tenant → create Employee/Student → `PersonCreated` audit. PG migration pending (see roadmap).
 
 Full FRS target 150–250 pages; add FR-COR-001 etc. in Release 2.

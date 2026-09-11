@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.Json.Serialization;
 using EduNexus.Api.Auth;
 using EduNexus.Api.Events;
+using EduNexus.Api.Storage;
+using Minio;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -34,6 +36,20 @@ builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection(Rab
 builder.Services.AddHostedService<EventRelay>();
 builder.Services.AddHostedService<NotificationConsumer>();
 builder.Services.AddHostedService<SlaMonitor>();
+
+// --- S3-compatible object storage (MinIO reference) ---
+builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.Section));
+builder.Services.AddSingleton(sp =>
+{
+    var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<StorageOptions>>().Value;
+    return new MinioClient().WithEndpoint(o.Endpoint).WithCredentials(o.AccessKey, o.SecretKey).WithSSL(o.Secure).Build();
+});
+builder.Services.AddSingleton(sp =>
+{
+    var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<StorageOptions>>().Value;
+    var c = sp.GetRequiredService<IMinioClient>();
+    return new ObjectStorage(c, o);
+});
 
 // --- Observability: traces (OTLP, collector optional) + Prometheus metrics on /metrics ---
 builder.Services.AddOpenTelemetry()
@@ -755,6 +771,264 @@ policies.MapGet("/{id:guid}/pending", async (AppDbContext db, HttpContext ctx, G
     return Results.Ok(pending);
 });
 
+// ============================ R4 — Institutional Intelligence ============================
+
+var docs = app.MapGroup("/api/documents").WithTags("Documents").RequireAuthorization();
+docs.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.Documents.Where(d => d.TenantId == tenantId).OrderBy(d => d.Title).ToListAsync(ct));
+});
+docs.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateDocumentReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Title)) return Results.BadRequest(new { error = "Title required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var d = new Document(Guid.NewGuid(), req.TenantId, req.Title.Trim(), DocumentStatus.Draft, 0);
+    db.Documents.Add(d);
+    DomainEvents.Record(db, req.TenantId, "DocumentCreated", "DocumentCreated",
+        nameof(Document), d.Id.ToString(),
+        payload: new { tenantId = req.TenantId, documentId = d.Id, title = d.Title }, details: d.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/documents/{d.Id}", d);
+});
+docs.MapPost("/{id:guid}/upload-url", async (AppDbContext db, HttpContext ctx, ObjectStorage storage, Guid id, UploadUrlReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Documents.AnyAsync(d => d.TenantId == req.TenantId && d.Id == id, ct))
+        return Results.NotFound(new { error = "Document not found." });
+    await storage.EnsureBucketAsync(ct);
+    var key = $"{req.TenantId}/{id}/{Guid.NewGuid():N}-{req.FileName}";
+    return Results.Ok(new { objectKey = key, putUrl = await storage.PresignedPutAsync(key, ct: ct) });
+});
+docs.MapPost("/{id:guid}/versions", async (AppDbContext db, HttpContext ctx, Guid id, AddVersionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var d = await db.Documents.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (d is null) return Results.NotFound(new { error = "Document not found." });
+    var version = d.CurrentVersion + 1;
+    db.DocumentVersions.Add(new DocumentVersion(Guid.NewGuid(), req.TenantId, id, version, req.ObjectKey, req.SizeBytes, req.Sha256 ?? "", DateTimeOffset.UtcNow));
+    db.Entry(d).CurrentValues.SetValues(d with { CurrentVersion = version, Status = req.Publish ? DocumentStatus.Published : d.Status });
+    DomainEvents.Record(db, req.TenantId, "DocumentVersionAdded", "DocumentVersionAdded",
+        nameof(Document), d.Id.ToString(),
+        payload: new { tenantId = req.TenantId, documentId = id, version }, details: $"v{version}");
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/documents/{id}/versions/{version}", new { version });
+});
+docs.MapGet("/{id:guid}/download-url", async (AppDbContext db, HttpContext ctx, ObjectStorage storage, Guid id, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var v = await db.DocumentVersions.Where(x => x.TenantId == tenantId && x.DocumentId == id)
+        .OrderByDescending(x => x.Version).FirstOrDefaultAsync(ct);
+    if (v is null) return Results.NotFound(new { error = "No versions." });
+    return Results.Ok(new { objectKey = v.ObjectKey, getUrl = await storage.PresignedGetAsync(v.ObjectKey, ct: ct), version = v.Version });
+});
+
+var search = app.MapGroup("/api/search").WithTags("Search").RequireAuthorization();
+search.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, string q, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("search:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(q) || q.Length < 2) return Results.BadRequest(new { error = "q (min 2 chars) required." });
+    var canSeeConfidential = ctx.User.HasPermission("correspondence:confidential");
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    // Trigram-backed ILIKE across R1–R4 entities (OpenSearch sync is the R5 scale path).
+    var correspondence = await db.Correspondences
+        .Where(c => c.TenantId == tenantId && (canSeeConfidential || !c.IsConfidential) && c.Subject.Contains(q))
+        .Select(c => new { kind = "correspondence", id = c.Id, title = c.Subject }).Take(20).ToListAsync(ct);
+    var people = await db.People.Where(p => p.TenantId == tenantId && p.FullName.Contains(q))
+        .Select(p => new { kind = "person", id = p.Id, title = p.FullName }).Take(20).ToListAsync(ct);
+    var decisions = await db.Decisions.Where(d => d.TenantId == tenantId && d.Text.Contains(q))
+        .Select(d => new { kind = "decision", id = d.Id, title = d.Text }).Take(20).ToListAsync(ct);
+    var documents = await db.Documents.Where(d => d.TenantId == tenantId && d.Title.Contains(q))
+        .Select(d => new { kind = "document", id = d.Id, title = d.Title }).Take(20).ToListAsync(ct);
+    var policies = await db.Policies.Where(p => p.TenantId == tenantId && p.Title.Contains(q))
+        .Select(p => new { kind = "policy", id = p.Id, title = p.Title }).Take(20).ToListAsync(ct);
+    return Results.Ok(new { correspondence, people, decisions, documents, policies });
+});
+
+var analytics = app.MapGroup("/api/analytics").WithTags("Analytics").RequireAuthorization();
+analytics.MapGet("/overview", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("analytics:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    var now = DateTimeOffset.UtcNow;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var corrByStatus = await db.Correspondences.Where(c => c.TenantId == tenantId)
+        .GroupBy(c => c.Status).Select(g => new { status = g.Key.ToString(), count = g.Count() }).ToListAsync(ct);
+    var pendingApprovals = await db.Approvals.CountAsync(a => a.TenantId == tenantId && a.Status == ApprovalStatus.Pending, ct);
+    var breachedApprovals = await db.Approvals.CountAsync(a => a.TenantId == tenantId && a.Status == ApprovalStatus.Pending && a.DueAt < now, ct);
+    var openTasks = await db.WorkTasks.CountAsync(t => t.TenantId == tenantId && t.Status != WorkTaskStatus.Done, ct);
+    var breachedTasks = await db.WorkTasks.CountAsync(t => t.TenantId == tenantId && t.Status == WorkTaskStatus.Breached, ct);
+    var decisions = await db.Decisions.CountAsync(d => d.TenantId == tenantId, ct);
+    var openActions = await db.DecisionActions.CountAsync(a => a.TenantId == tenantId && a.Status != DecisionActionStatus.Done && a.Status != DecisionActionStatus.Verified, ct);
+    var people = await db.People.CountAsync(p => p.TenantId == tenantId && p.IsActive, ct);
+    var publishedPolicies = await db.Policies.CountAsync(p => p.TenantId == tenantId && p.Status == PolicyStatus.Published, ct);
+    var ackRate = publishedPolicies == 0 ? 1.0 : (double)await db.PolicyAcknowledgements.CountAsync(a => a.TenantId == tenantId, ct)
+        / Math.Max(1, publishedPolicies * Math.Max(1, people));
+    return Results.Ok(new
+    {
+        correspondenceByStatus = corrByStatus, pendingApprovals, breachedApprovals,
+        openTasks, breachedTasks, decisions, openActions, activePeople = people,
+        publishedPolicies, policyAckRate = Math.Round(Math.Min(1, ackRate), 3),
+    });
+});
+
+var quality = app.MapGroup("/api/quality").WithTags("Quality").RequireAuthorization();
+quality.MapPost("/standards", async (AppDbContext db, HttpContext ctx, CreateStandardReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var s = new Standard(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Title.Trim());
+    db.Standards.Add(s);
+    DomainEvents.Record(db, req.TenantId, "StandardCreated", "StandardCreated",
+        nameof(Standard), s.Id.ToString(),
+        payload: new { tenantId = req.TenantId, standardId = s.Id, code = s.Code }, details: s.Code);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Standard code '{req.Code}' already exists." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/quality/standards/{s.Id}", s);
+});
+quality.MapPost("/criteria", async (AppDbContext db, HttpContext ctx, CreateCriterionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Standards.AnyAsync(s => s.TenantId == req.TenantId && s.Id == req.StandardId, ct))
+        return Results.NotFound(new { error = "Standard not found." });
+    var c = new Criterion(Guid.NewGuid(), req.TenantId, req.StandardId, req.Code.Trim(), req.Text);
+    db.Criteria.Add(c);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/quality/criteria/{c.Id}", c);
+});
+quality.MapPost("/evidence", async (AppDbContext db, HttpContext ctx, AddEvidenceReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Criteria.AnyAsync(c => c.TenantId == req.TenantId && c.Id == req.CriterionId, ct))
+        return Results.NotFound(new { error = "Criterion not found." });
+    var e = new Evidence(Guid.NewGuid(), req.TenantId, req.CriterionId, req.EntityType, req.EntityId, req.Note ?? "");
+    db.Evidences.Add(e);
+    DomainEvents.Record(db, req.TenantId, "EvidenceAdded", "EvidenceAdded",
+        nameof(Evidence), e.Id.ToString(),
+        payload: new { tenantId = req.TenantId, criterionId = req.CriterionId, entityType = req.EntityType, entityId = req.EntityId }, details: req.EntityType);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/quality/evidence/{e.Id}", e);
+});
+quality.MapPost("/findings", async (AppDbContext db, HttpContext ctx, CreateFindingReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<FindingSeverity>(req.Severity, true, out var sev))
+        return Results.BadRequest(new { error = "Severity must be Observation|Minor|Major." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Criteria.AnyAsync(c => c.TenantId == req.TenantId && c.Id == req.CriterionId, ct))
+        return Results.NotFound(new { error = "Criterion not found." });
+    var fnd = new Finding(Guid.NewGuid(), req.TenantId, req.CriterionId, sev, req.Text, false);
+    db.Findings.Add(fnd);
+    DomainEvents.Record(db, req.TenantId, "FindingOpened", "FindingOpened",
+        nameof(Finding), fnd.Id.ToString(),
+        payload: new { tenantId = req.TenantId, findingId = fnd.Id, severity = sev.ToString() }, details: sev.ToString());
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/quality/findings/{fnd.Id}", fnd);
+});
+quality.MapPost("/corrective-actions", async (AppDbContext db, HttpContext ctx, CreateCorrectiveActionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Findings.AnyAsync(x => x.TenantId == req.TenantId && x.Id == req.FindingId, ct))
+        return Results.NotFound(new { error = "Finding not found." });
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.AssigneeId, ct))
+        return Results.NotFound(new { error = "Assignee not found in tenant." });
+    var a = new CorrectiveAction(Guid.NewGuid(), req.TenantId, req.FindingId, req.AssigneeId,
+        req.Description, CorrectiveActionStatus.Open, req.DueAt ?? DateTimeOffset.UtcNow.AddDays(30));
+    db.CorrectiveActions.Add(a);
+    DomainEvents.Record(db, req.TenantId, "CorrectiveActionOpened", "CorrectiveActionOpened",
+        nameof(CorrectiveAction), a.Id.ToString(),
+        payload: new { tenantId = req.TenantId, actionId = a.Id, findingId = req.FindingId, assigneeId = req.AssigneeId }, details: a.Description);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/quality/corrective-actions/{a.Id}", a);
+});
+
+var strategy = app.MapGroup("/api/strategy").WithTags("Strategy").RequireAuthorization();
+strategy.MapPost("/plans", async (AppDbContext db, HttpContext ctx, CreatePlanReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var p = new StrategicPlan(Guid.NewGuid(), req.TenantId, req.Title.Trim(), req.YearFrom, req.YearTo);
+    db.StrategicPlans.Add(p);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/strategy/plans/{p.Id}", p);
+});
+strategy.MapPost("/objectives", async (AppDbContext db, HttpContext ctx, CreateObjectiveReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.StrategicPlans.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.PlanId, ct))
+        return Results.NotFound(new { error = "Plan not found." });
+    var o = new Objective(Guid.NewGuid(), req.TenantId, req.PlanId, req.Code.Trim(), req.Text);
+    db.Objectives.Add(o);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Objective code '{req.Code}' already exists in plan." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/strategy/objectives/{o.Id}", o);
+});
+strategy.MapPost("/kpis", async (AppDbContext db, HttpContext ctx, CreateKpiReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Objectives.AnyAsync(o => o.TenantId == req.TenantId && o.Id == req.ObjectiveId, ct))
+        return Results.NotFound(new { error = "Objective not found." });
+    var k = new Kpi(Guid.NewGuid(), req.TenantId, req.ObjectiveId, req.Name.Trim(), req.Target, req.Current, req.Unit ?? "");
+    db.Kpis.Add(k);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/strategy/kpis/{k.Id}", k);
+});
+strategy.MapPost("/kpis/{id:guid}/reading", async (AppDbContext db, HttpContext ctx, Guid id, KpiReadingReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var k = await db.Kpis.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (k is null) return Results.NotFound(new { error = "KPI not found." });
+    db.Entry(k).CurrentValues.SetValues(k with { Current = req.Current });
+    DomainEvents.Record(db, req.TenantId, "KpiUpdated", "KpiUpdated",
+        nameof(Kpi), k.Id.ToString(),
+        payload: new { tenantId = req.TenantId, kpiId = k.Id, current = req.Current, target = k.Target }, details: k.Name);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(k);
+});
+
 app.Run();
 
 public sealed record CreateTenantReq(string Slug, string Name);
@@ -781,3 +1055,15 @@ public sealed record AdvanceActionReq(Guid TenantId, string Status);
 public sealed record CreatePolicyReq(Guid TenantId, string Code, string Title, string? Content);
 public sealed record PublishPolicyReq(Guid TenantId);
 public sealed record AcknowledgePolicyReq(Guid TenantId, Guid PersonId);
+public sealed record CreateDocumentReq(Guid TenantId, string Title);
+public sealed record UploadUrlReq(Guid TenantId, string FileName);
+public sealed record AddVersionReq(Guid TenantId, string ObjectKey, long SizeBytes, string? Sha256, bool Publish);
+public sealed record CreateStandardReq(Guid TenantId, string Code, string Title);
+public sealed record CreateCriterionReq(Guid TenantId, Guid StandardId, string Code, string Text);
+public sealed record AddEvidenceReq(Guid TenantId, Guid CriterionId, string EntityType, Guid EntityId, string? Note);
+public sealed record CreateFindingReq(Guid TenantId, Guid CriterionId, string Severity, string Text);
+public sealed record CreateCorrectiveActionReq(Guid TenantId, Guid FindingId, Guid AssigneeId, string Description, DateTimeOffset? DueAt);
+public sealed record CreatePlanReq(Guid TenantId, string Title, int YearFrom, int YearTo);
+public sealed record CreateObjectiveReq(Guid TenantId, Guid PlanId, string Code, string Text);
+public sealed record CreateKpiReq(Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string? Unit);
+public sealed record KpiReadingReq(Guid TenantId, double Current);

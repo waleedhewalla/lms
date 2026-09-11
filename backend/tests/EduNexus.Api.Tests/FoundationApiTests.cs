@@ -337,6 +337,79 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Intelligence_Documents_Search_Analytics_Quality_Strategy()
+    {
+        var perms = AllPerms.Concat(["correspondence:create", "document:create", "document:read",
+            "search:read", "analytics:read", "quality:manage", "strategy:manage"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Intel Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // documents: create → presigned upload URL (MinIO) → version → publish
+        var doc = IdOf(await (await client.PostAsJsonAsync("/api/documents",
+            new { tenantId = tenant, title = "Budget policy 2026" })).Content.ReadFromJsonAsync<JsonElement>());
+        var urlRes = await client.PostAsJsonAsync($"/api/documents/{doc}/upload-url",
+            new { tenantId = tenant, fileName = "budget.pdf" });
+        Assert.Equal(HttpStatusCode.OK, urlRes.StatusCode);
+        var upload = await urlRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("edunexus-docs", upload.GetProperty("putUrl").GetString());
+        var ver = await client.PostAsJsonAsync($"/api/documents/{doc}/versions",
+            new { tenantId = tenant, objectKey = upload.GetProperty("objectKey").GetString(), sizeBytes = 1234, sha256 = "abc", publish = true });
+        Assert.Equal(HttpStatusCode.Created, ver.StatusCode);
+
+        // correspondence for search + analytics signal
+        var person = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Layla Intel", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var corr = await client.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant, type = "Internal", subject = "Budget policy review", content = "Review the budget policy.",
+            authorId = person, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(),
+        });
+        Assert.Equal(HttpStatusCode.Created, corr.StatusCode);
+
+        // unified search finds it in two entity kinds
+        var search = await client.GetFromJsonAsync<JsonElement>($"/api/search?tenantId={tenant}&q=Budget");
+        Assert.True(search.GetProperty("correspondence").GetArrayLength() >= 1);
+        Assert.True(search.GetProperty("documents").GetArrayLength() >= 1);
+        var tooShort = await client.GetAsync($"/api/search?tenantId={tenant}&q=x");
+        Assert.Equal(HttpStatusCode.BadRequest, tooShort.StatusCode);
+
+        // analytics overview reflects the data
+        var analytics = await client.GetFromJsonAsync<JsonElement>($"/api/analytics/overview?tenantId={tenant}");
+        Assert.True(analytics.GetProperty("activePeople").GetInt32() >= 1);
+
+        // accreditation: standard → criterion → evidence(link to correspondence) → finding → corrective action
+        var std = IdOf(await (await client.PostAsJsonAsync("/api/quality/standards",
+            new { tenantId = tenant, code = "STD-1", title = "Governance" })).Content.ReadFromJsonAsync<JsonElement>());
+        var crit = IdOf(await (await client.PostAsJsonAsync("/api/quality/criteria",
+            new { tenantId = tenant, standardId = std, code = "C1", text = "Decisions documented." })).Content.ReadFromJsonAsync<JsonElement>());
+        var corrId = (await corr.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var ev = await client.PostAsJsonAsync("/api/quality/evidence",
+            new { tenantId = tenant, criterionId = crit, entityType = "Correspondence", entityId = corrId, note = "Budget memo" });
+        Assert.Equal(HttpStatusCode.Created, ev.StatusCode);
+        var finding = IdOf(await (await client.PostAsJsonAsync("/api/quality/findings",
+            new { tenantId = tenant, criterionId = crit, severity = "Minor", text = "Minutes missing." })).Content.ReadFromJsonAsync<JsonElement>());
+        var ca = await client.PostAsJsonAsync("/api/quality/corrective-actions",
+            new { tenantId = tenant, findingId = finding, assigneeId = person, description = "Attach minutes.", dueAt = (DateTimeOffset?)null });
+        Assert.Equal(HttpStatusCode.Created, ca.StatusCode);
+
+        // strategy: plan → objective → KPI → reading
+        var plan = IdOf(await (await client.PostAsJsonAsync("/api/strategy/plans",
+            new { tenantId = tenant, title = "Strategy 2030", yearFrom = 2026, yearTo = 2030 })).Content.ReadFromJsonAsync<JsonElement>());
+        var obj = IdOf(await (await client.PostAsJsonAsync("/api/strategy/objectives",
+            new { tenantId = tenant, planId = plan, code = "O1", text = "Digital-first." })).Content.ReadFromJsonAsync<JsonElement>());
+        var kpi = IdOf(await (await client.PostAsJsonAsync("/api/strategy/kpis",
+            new { tenantId = tenant, objectiveId = obj, name = "Online services %", target = 90.0, current = 40.0, unit = "%" })).Content.ReadFromJsonAsync<JsonElement>());
+        var reading = await client.PostAsJsonAsync($"/api/strategy/kpis/{kpi}/reading",
+            new { tenantId = tenant, current = 55.0 });
+        Assert.Equal(HttpStatusCode.OK, reading.StatusCode);
+        Assert.Equal(55.0, (await reading.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("current").GetDouble());
+    }
+
+    [Fact]
     public async Task AssignRole_WritesOutbox_And_RelayDispatches()
     {
         // Requires RabbitMQ on localhost:5673 (edunexus-rabbitmq). The test host

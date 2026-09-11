@@ -182,3 +182,38 @@ public enum PolicyStatus { Draft, Published, Retired }
 public sealed record Policy(Guid Id, Guid TenantId, string Code, string Title, string Content, PolicyStatus Status, int Version);
 
 public sealed record PolicyAcknowledgement(Guid Id, Guid TenantId, Guid PolicyId, Guid PersonId, DateTimeOffset At);
+
+// ============================ R4 — Institutional Intelligence ============================
+
+public enum DocumentStatus { Draft, Published, Archived }
+
+public sealed record Document(Guid Id, Guid TenantId, string Title, DocumentStatus Status, int CurrentVersion);
+
+public sealed record DocumentVersion(
+    Guid Id, Guid TenantId, Guid DocumentId, int Version,
+    string ObjectKey, long SizeBytes, string Sha256, DateTimeOffset CreatedAt);
+
+public sealed record Standard(Guid Id, Guid TenantId, string Code, string Title);
+
+public sealed record Criterion(Guid Id, Guid TenantId, Guid StandardId, string Code, string Text);
+
+public sealed record Evidence(
+    Guid Id, Guid TenantId, Guid CriterionId, string EntityType, Guid EntityId, string Note);
+
+public enum FindingSeverity { Observation, Minor, Major }
+
+public sealed record Finding(
+    Guid Id, Guid TenantId, Guid CriterionId, FindingSeverity Severity, string Text, bool IsClosed);
+
+public enum CorrectiveActionStatus { Open, InProgress, Done, Verified }
+
+public sealed record CorrectiveAction(
+    Guid Id, Guid TenantId, Guid FindingId, Guid AssigneeId, string Description,
+    CorrectiveActionStatus Status, DateTimeOffset DueAt);
+
+public sealed record StrategicPlan(Guid Id, Guid TenantId, string Title, int YearFrom, int YearTo);
+
+public sealed record Objective(Guid Id, Guid TenantId, Guid PlanId, string Code, string Text);
+
+public sealed record Kpi(
+    Guid Id, Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string Unit);

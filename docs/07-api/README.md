@@ -38,6 +38,13 @@ Enums serialize as strings (JsonStringEnumConverter).
 - `POST /api/decision-actions/{id}/advance` (`action:update`) → `ActionAdvanced`
 - `GET/POST /api/policies` (`policy:read/create`), `POST /api/policies/{id}/publish|acknowledge` (`policy:ack`), `GET /api/policies/{id}/pending`
 
+## R4 implemented
+- `GET/POST /api/documents` (`document:read/create`), `POST /api/documents/{id}/upload-url|/versions`, `GET /api/documents/{id}/download-url` (MinIO presigned, bucket `edunexus-docs`)
+- `GET /api/search?q=&tenantId=` (`search:read`, trigram indexes)
+- `GET /api/analytics/overview?tenantId=` (`analytics:read`)
+- `POST /api/quality/standards|criteria|evidence|findings|corrective-actions` (`quality:manage`)
+- `POST /api/strategy/plans|objectives|kpis`, `POST /api/strategy/kpis/{id}/reading` (`strategy:manage`)
+
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
 tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
 (`DomainEvents.Record`). OpenAPI at `/openapi/v1.json` (dev).
@@ -64,6 +71,9 @@ persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt`
 | DecisionPublished | POST /api/meetings/{id}/decisions | tenantId, decisionId, meetingId, committeeId, text | notifications (members) |
 | ActionAssigned / ActionAdvanced | POST /api/decisions/{id}/actions[/advance] | tenantId, actionId, assigneeId, description | notifications (assignee) |
 | PolicyCreated / PolicyPublished / PolicyAcknowledged | POST /api/policies[/{id}/publish|/acknowledge] | tenantId, policyId, code | notifications (all staff on publish) |
+| DocumentCreated / DocumentVersionAdded | POST /api/documents[/{id}/versions] | tenantId, documentId, version | search indexer (R5) |
+| EvidenceAdded / FindingOpened / CorrectiveActionOpened | POST /api/quality/… | tenantId, ids | audit projector |
+| KpiUpdated | POST /api/strategy/kpis/{id}/reading | tenantId, kpiId, current, target | analytics |
 
 `OutboxEvents` is intentionally **exempt from RLS** (platform-level, like `Tenants`)
 so the relay reads all tenants; isolation is enforced by consumer-side `tenant_id` filtering.

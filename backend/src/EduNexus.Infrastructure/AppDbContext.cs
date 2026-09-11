@@ -32,6 +32,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<DecisionAction> DecisionActions => Set<DecisionAction>();
     public DbSet<Policy> Policies => Set<Policy>();
     public DbSet<PolicyAcknowledgement> PolicyAcknowledgements => Set<PolicyAcknowledgement>();
+    public DbSet<Document> Documents => Set<Document>();
+    public DbSet<DocumentVersion> DocumentVersions => Set<DocumentVersion>();
+    public DbSet<Standard> Standards => Set<Standard>();
+    public DbSet<Criterion> Criteria => Set<Criterion>();
+    public DbSet<Evidence> Evidences => Set<Evidence>();
+    public DbSet<Finding> Findings => Set<Finding>();
+    public DbSet<CorrectiveAction> CorrectiveActions => Set<CorrectiveAction>();
+    public DbSet<StrategicPlan> StrategicPlans => Set<StrategicPlan>();
+    public DbSet<Objective> Objectives => Set<Objective>();
+    public DbSet<Kpi> Kpis => Set<Kpi>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -198,6 +208,60 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId }).IsUnique();
+        });
+        b.Entity<Document>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.TenantId);
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<DocumentVersion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.DocumentId, x.Version }).IsUnique();
+        });
+        b.Entity<Standard>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+        b.Entity<Criterion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.StandardId, x.Code }).IsUnique();
+        });
+        b.Entity<Evidence>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CriterionId });
+        });
+        b.Entity<Finding>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CriterionId });
+            e.Property(x => x.Severity).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<CorrectiveAction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.FindingId });
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<StrategicPlan>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.TenantId);
+        });
+        b.Entity<Objective>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PlanId, x.Code }).IsUnique();
+        });
+        b.Entity<Kpi>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.ObjectiveId });
         });
     }
 }
