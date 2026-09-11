@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pre-commit: block obvious secrets and production configs. Fast by design.
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$staged" ]; then exit 0; fi
+echo "$staged" | grep -Ei 'appsettings\.Production\.json|\.pem$|\.key$|(^|/)secrets/' && {
+  echo "BLOCKED: production secrets or key files staged. Remove them and retry."; exit 1; }
+git diff --cached -U0 | grep -Ei '^\+.*(password\s*=\s*["'\''][^"'\'']|BEGIN (RSA )?PRIVATE KEY)' | grep -v 'Password=edunexus' | grep -v 'dev-only-key-change-me' && {
+  echo "BLOCKED: possible secret in diff. Use config/secrets management instead."; exit 1; }
+exit 0
