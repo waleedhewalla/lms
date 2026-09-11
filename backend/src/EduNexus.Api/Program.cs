@@ -85,6 +85,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             o.Authority = authCfg.Authority;
             o.Audience = authCfg.Audience;
+            // On-prem test IdPs often run plain HTTP; TLS stays mandatory in Production.
+            o.RequireHttpsMetadata = builder.Environment.IsProduction();
         }
         else
         {
@@ -122,6 +124,15 @@ if (app.Environment.IsDevelopment())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+// Security headers (defense in depth; TLS termination is upstream on-prem).
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.Headers.XContentTypeOptions = "nosniff";
+    ctx.Response.Headers.XFrameOptions = "DENY";
+    ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
+    ctx.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    await next();
+});
 app.MapHealthChecks("/health");
 app.MapPrometheusScrapingEndpoint();
 
@@ -232,6 +243,48 @@ people.MapPost("/", async (AppDbContext db, HttpContext ctx, CreatePersonReq req
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
     return Results.Created("/api/people", person);
+});
+// CSV directory import (pilot migration tooling): header fullName,email,type — dryRun validates only.
+people.MapPost("/import", async (AppDbContext db, HttpContext ctx, Guid tenantId, bool dryRun, HttpRequest request, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("person:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    if (!await db.Tenants.AnyAsync(t => t.Id == tenantId, ct))
+        return Results.NotFound(new { error = "Tenant not found." });
+    using var reader = new StreamReader(request.Body);
+    var header = await reader.ReadLineAsync(ct);
+    if (header is null || !header.Trim().Equals("fullName,email,type", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "CSV header must be: fullName,email,type" });
+    var created = new List<Person>();
+    var errors = new List<string>();
+    string? line;
+    var row = 1;
+    while ((line = await reader.ReadLineAsync(ct)) is not null)
+    {
+        row++;
+        if (string.IsNullOrWhiteSpace(line)) continue;
+        var parts = line.Split(',');
+        if (parts.Length < 2) { errors.Add($"row {row}: need at least fullName,email"); continue; }
+        var name = parts[0].Trim();
+        var email = parts[1].Trim();
+        var typeRaw = parts.Length > 2 ? parts[2].Trim() : "Employee";
+        if (string.IsNullOrWhiteSpace(name)) { errors.Add($"row {row}: fullName required"); continue; }
+        if (!Enum.TryParse<PersonType>(string.IsNullOrWhiteSpace(typeRaw) ? "Employee" : typeRaw, true, out var ptype))
+        { errors.Add($"row {row}: bad type '{typeRaw}'"); continue; }
+        try { created.Add(Person.Create(tenantId, ptype, name, string.IsNullOrWhiteSpace(email) ? null : email)); }
+        catch (ArgumentException ex) { errors.Add($"row {row}: {ex.Message}"); }
+    }
+    if (dryRun) return Results.Ok(new { valid = created.Count, errors });
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    foreach (var p in created)
+    {
+        db.People.Add(p);
+        DomainEvents.Record(db, tenantId, "PersonCreated", "PersonCreated",
+            nameof(Person), p.Id.ToString(), details: $"csv:{p.FullName}");
+    }
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(new { imported = created.Count, errors });
 });
 
 // --- Audit trail (tenant-scoped, RLS) ---

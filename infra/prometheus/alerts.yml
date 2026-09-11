@@ -1,0 +1,21 @@
+groups:
+  - name: edunexus-api
+    interval: 30s
+    rules:
+      - alert: ApiDown
+        expr: up{job="edunexus-api"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "EduNexus API scrape down" }
+      - alert: HighErrorRate
+        expr: sum(rate(http_server_request_duration_count{http_response_status_code=~"5.."}[5m])) / sum(rate(http_server_request_duration_count[5m])) > 0.01
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "API 5xx rate above 1%" }
+      - alert: SlowP95
+        expr: histogram_quantile(0.95, sum(rate(http_server_request_duration_bucket[5m])) by (le)) > 0.5
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "API p95 latency above 500ms" }
+# NOTE: outbox lag is verified by integration tests + k6 lag check, not metrics
+# (adding a DB-backed gauge would put a query on every Prometheus scrape).

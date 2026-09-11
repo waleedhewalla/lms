@@ -13,7 +13,7 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
         body: JSON.stringify({
           subject: "web-admin",
           tenantId,
-          permissions: ["tenant:read", "org:read", "person:read", "person:create", "role:create", "role:assign", "role:read", "audit:read"],
+          permissions: ["tenant:read", "org:read", "person:read", "person:create", "role:create", "role:assign", "role:read", "audit:read", "correspondence:create", "correspondence:read", "correspondence:confidential", "approval:read", "approval:decide", "task:read", "task:update", "notification:read", "committee:create", "committee:read", "meeting:create", "meeting:read", "decision:create", "decision:read", "action:update", "policy:create", "policy:read", "policy:ack", "document:create", "document:read", "search:read", "analytics:read", "quality:manage", "strategy:manage", "ai:manage", "ai:ask", "ai:read", "integration:manage", "integration:read"],
         }),
       });
       if (!res.ok) throw new Error(`dev-token → ${res.status} (API must run in Development)`);

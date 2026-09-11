@@ -1,0 +1,184 @@
+# Stateful reference services. Production sites: size storage, set resource limits,
+# wire backups (postgres) per infra/postgres/RUNBOOK.md.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: edunexus-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: edunexus-postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: edunexus-postgres }
+  template:
+    metadata:
+      labels: { app: edunexus-postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.registry }}{{ .Values.postgres.image }}"
+          args:
+            - postgres
+            - -cwal_level=replica
+            - -carchive_mode=on
+            - -carchive_timeout=60
+            - -carchive_command=test ! -f /walarchive/%f && cp %p /walarchive/%f
+          env:
+            - { name: POSTGRES_DB, value: edunexus }
+            - { name: POSTGRES_USER, value: edunexus }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: edunexus-postgres, key: password } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: walarchive, mountPath: /walarchive }
+            - { name: backups, mountPath: /backups }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.postgres.storage }} } } }
+    - metadata: { name: walarchive }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.postgres.walArchiveSize }} } } }
+    - metadata: { name: backups }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.postgres.backupSize }} } } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edunexus-postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  selector: { app: edunexus-postgres }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: edunexus-redis
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: edunexus-redis
+  replicas: 1
+  selector:
+    matchLabels: { app: edunexus-redis }
+  template:
+    metadata:
+      labels: { app: edunexus-redis }
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.registry }}{{ .Values.redis.image }}"
+          args: [redis-server, --appendonly, "yes"]
+          ports: [{ containerPort: 6379 }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.redis.storage }} } } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edunexus-redis
+  namespace: {{ .Values.namespace }}
+spec:
+  selector: { app: edunexus-redis }
+  ports: [{ port: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edunexus-rabbitmq
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: edunexus-rabbitmq }
+  template:
+    metadata:
+      labels: { app: edunexus-rabbitmq }
+    spec:
+      containers:
+        - name: rabbitmq
+          image: "{{ .Values.registry }}{{ .Values.rabbitmq.image }}"
+          ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edunexus-rabbitmq
+  namespace: {{ .Values.namespace }}
+spec:
+  selector: { app: edunexus-rabbitmq }
+  ports: [{ port: 5672 }, { port: 15672 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: edunexus-minio
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: edunexus-minio
+  replicas: 1
+  selector:
+    matchLabels: { app: edunexus-minio }
+  template:
+    metadata:
+      labels: { app: edunexus-minio }
+    spec:
+      containers:
+        - name: minio
+          image: "{{ .Values.registry }}{{ .Values.minio.image }}"
+          args: [server, /data, --console-address, ":9001"]
+          env:
+            - { name: MINIO_ROOT_USER, value: minio }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: edunexus-minio, key: root-password } }
+          ports: [{ containerPort: 9000 }, { containerPort: 9001 }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.minio.storage }} } } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edunexus-minio
+  namespace: {{ .Values.namespace }}
+spec:
+  selector: { app: edunexus-minio }
+  ports: [{ port: 9000 }, { port: 9001 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: edunexus-opensearch
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: edunexus-opensearch
+  replicas: 1
+  selector:
+    matchLabels: { app: edunexus-opensearch }
+  template:
+    metadata:
+      labels: { app: edunexus-opensearch }
+    spec:
+      containers:
+        - name: opensearch
+          image: "{{ .Values.registry }}{{ .Values.opensearch.image }}"
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: DISABLE_SECURITY_PLUGIN, value: "true" }
+            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+          ports: [{ containerPort: 9200 }]
+          volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.opensearch.storage }} } } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edunexus-opensearch
+  namespace: {{ .Values.namespace }}
+spec:
+  selector: { app: edunexus-opensearch }
+  ports: [{ port: 9200 }]

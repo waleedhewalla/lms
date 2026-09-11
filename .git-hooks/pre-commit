@@ -4,6 +4,8 @@ staged=$(git diff --cached --name-only --diff-filter=ACM)
 if [ -z "$staged" ]; then exit 0; fi
 echo "$staged" | grep -Ei 'appsettings\.Production\.json|\.pem$|\.key$|(^|/)secrets/' && {
   echo "BLOCKED: production secrets or key files staged. Remove them and retry."; exit 1; }
-git diff --cached -U0 | grep -Ei '^\+.*(password\s*=\s*["'\''][^"'\'']|BEGIN (RSA )?PRIVATE KEY)' | grep -v 'Password=edunexus' | grep -v 'dev-only-key-change-me' && {
+git diff --cached -U0 | grep -Ei '^\+.*(password\s*=\s*["'\''][^"'\'']|BEGIN (RSA )?PRIVATE KEY)' | grep -v 'Password=edunexus' | grep -v 'dev-only-key-change-me' | grep -v 'infra/keycloak/' && {
   echo "BLOCKED: possible secret in diff. Use config/secrets management instead."; exit 1; }
+# NOTE: infra/keycloak/ is exempt — local-proof bootstrap creds only (KC_* env overrides),
+# documented in docs/03-architecture/secrets-management.md. Never valid for prod IdPs.
 exit 0

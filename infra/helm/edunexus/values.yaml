@@ -1,0 +1,31 @@
+# On-prem reference values (ADR-001). Override secrets per site — never commit real ones.
+namespace: edunexus
+registry: ""  # private registry prefix for air-gap, e.g. "registry.local:5000/"
+api:
+  image: edunexus-api:1.1.0
+  replicas: 2
+  port: 8080
+  env:
+    ASPNETCORE_ENVIRONMENT: Production
+    EDUNEXUS_CONNECTION: Host=edunexus-postgres;Port=5432;Database=edunexus;Username=edunexus;Password=CHANGEME
+  auth:
+    authority: https://idp.local/realms/edunexus  # customer IdP (OIDC); empty disables OIDC
+    audience: edunexus-api
+  rabbitmq:
+    host: edunexus-rabbitmq
+    port: 5672
+  storage:
+    endpoint: edunexus-minio:9000
+  ai:
+    openSearchUrl: http://edunexus-opensearch:9200
+postgres:
+  image: postgres:16
+  storage: 20Gi
+  walArchiveSize: 10Gi
+  backupSize: 20Gi
+redis: { image: redis:7, storage: 5Gi }
+rabbitmq: { image: rabbitmq:3-management }
+minio: { image: minio/minio, storage: 50Gi }
+opensearch: { image: opensearchproject/opensearch:2, storage: 20Gi }
+prometheus: { image: prom/prometheus:v3.1.0 }
+grafana: { image: grafana/grafana:11.4.0 }

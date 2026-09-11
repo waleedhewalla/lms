@@ -337,6 +337,29 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task PeopleImport_DryRun_Then_Import()
+    {
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), ["tenant:create", "person:create", "person:read"]));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Import Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, ["person:create", "person:read"]));
+        var csv = "fullName,email,type\nAmina Import,amina@x.local,Employee\nBad Row\nKarim Import,,Student\n";
+        var dry = await client.PostAsync($"/api/people/import?tenantId={tenant}&dryRun=true",
+            new StringContent(csv, System.Text.Encoding.UTF8, "text/csv"));
+        Assert.Equal(HttpStatusCode.OK, dry.StatusCode);
+        var dryBody = await dry.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, dryBody.GetProperty("valid").GetInt32());
+        Assert.Equal(1, dryBody.GetProperty("errors").GetArrayLength());
+        var imp = await client.PostAsync($"/api/people/import?tenantId={tenant}&dryRun=false",
+            new StringContent(csv, System.Text.Encoding.UTF8, "text/csv"));
+        Assert.Equal(HttpStatusCode.OK, imp.StatusCode);
+        var people = await client.GetFromJsonAsync<JsonElement>($"/api/people?tenantId={tenant}&q=Import");
+        Assert.Equal(2, people.GetArrayLength());
+    }
+
+    [Fact]
     public async Task Intelligence_Documents_Search_Analytics_Quality_Strategy()
     {
         var perms = AllPerms.Concat(["correspondence:create", "document:create", "document:read",

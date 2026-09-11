@@ -51,7 +51,7 @@ services:
     container_name: edunexus-prometheus
     restart: unless-stopped
     ports: ["9091:9090"]
-    volumes: [./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro"]
     extra_hosts: ["host.docker.internal:host-gateway"]
   grafana:
     image: grafana/grafana:11.4.0
@@ -61,7 +61,18 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: edunexus
-    volumes: [grafanadata:/var/lib/grafana]
+    volumes: [grafanadata:/var/lib/grafana, ./grafana/datasource.yml:/etc/grafana/provisioning/datasources/edunexus.yml:ro, ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/edunexus.yml:ro, ./grafana/dashboard-api.json:/etc/grafana/dashboards/api.json:ro]
+  # Local OIDC IdP for integration proofs. Opt-in: compose --profile idp up keycloak
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: edunexus-keycloak
+    profiles: [idp]
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports: ["8080:8080"]
+    volumes: [keycloakdata:/opt/keycloak/data]
 volumes:
   pgdata: {}
   miniodata: {}
@@ -70,3 +81,4 @@ volumes:
   walarchive: {}
   pgbackup: {}
   redisdata: {}
+  keycloakdata: {}

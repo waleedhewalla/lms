@@ -16,6 +16,10 @@ export default function Home() {
         <li><a href="/directory">Directory (UX-DIR-001)</a></li>
         <li><a href="/roles">Roles & assignments (UX-ADM-001)</a></li>
         <li><a href="/audit">Audit trail</a></li>
+        <li><a href="/correspondence">Correspondence (UX-COR-001)</a></li>
+        <li><a href="/approvals">Approval workspace (UX-APR-006)</a></li>
+        <li><a href="/meetings">Meetings & decisions (UX-GOV-001)</a></li>
+        <li><a href="/intelligence">Intelligence: search, analytics, AI (UX-SRH-001)</a></li>
         <li>Metrics: <code>GET /metrics</code> → Prometheus :9091 → Grafana :3001</li>
       </ul>
       <p>Docs: <code>docs/01..11</code> · Traceability: <code>docs/11-traceability/matrix.csv</code></p>
