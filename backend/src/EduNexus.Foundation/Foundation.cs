@@ -144,10 +144,20 @@ public sealed record TaskComment(Guid Id, Guid TenantId, Guid TaskId, Guid Autho
 
 public enum NotificationChannel { InApp, Email, Sms }
 public enum NotificationStatus { Queued, Sent, Failed }
+public enum NotificationPriority { FYI, Normal, Important, Urgent, Emergency }
 
 public sealed record Notification(
     Guid Id, Guid TenantId, Guid PersonId, string Title, string Body,
-    NotificationChannel Channel, NotificationStatus Status, DateTimeOffset CreatedAt);
+    NotificationChannel Channel, NotificationStatus Status, DateTimeOffset CreatedAt,
+    NotificationPriority Priority = NotificationPriority.Normal, DateTimeOffset? ReadAt = null);
+
+public sealed record NotificationTemplate(
+    Guid Id, Guid TenantId, string Code, NotificationChannel Channel,
+    string Subject, string BodyTemplate, bool IsActive);
+
+public sealed record NotificationReceipt(
+    Guid Id, Guid TenantId, Guid NotificationId, NotificationChannel Channel,
+    NotificationStatus Status, string? ProviderMessageId, DateTimeOffset At);
 
 /// <summary>Per-tenant monotonic counters (correspondence numbers, request numbers…). Row-locked per transaction.</summary>
 public sealed record TenantSequence(Guid TenantId, string Scope, long NextValue);

@@ -54,6 +54,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<CommunicationRecipient> CommunicationRecipients => Set<CommunicationRecipient>();
     public DbSet<TaskEvidence> TaskEvidences => Set<TaskEvidence>();
     public DbSet<TaskComment> TaskComments => Set<TaskComment>();
+    public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
+    public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -176,6 +178,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.PersonId, x.Status });
             e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Channel).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Priority).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<NotificationTemplate>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code, x.Channel }).IsUnique();
+            e.Property(x => x.Channel).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<NotificationReceipt>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.NotificationId });
             e.Property(x => x.Channel).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
         });

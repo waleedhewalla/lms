@@ -1636,6 +1636,47 @@ communications.MapPost("/{id:guid}/publish", async (AppDbContext db, HttpContext
     return Results.Ok(new { communication = comm, tasksCreated = comm.RequiresAction ? recipients.Count : 0 });
 });
 
+var templates = app.MapGroup("/api/notification-templates").WithTags("NotificationTemplates").RequireAuthorization();
+templates.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("notification:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.NotificationTemplates.Where(t => t.TenantId == tenantId).OrderBy(t => t.Code).ToListAsync(ct));
+});
+templates.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateTemplateReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("notification:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<NotificationChannel>(req.Channel, true, out var ch))
+        return Results.BadRequest(new { error = "Channel must be InApp|Email|Sms." });
+    if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.BodyTemplate))
+        return Results.BadRequest(new { error = "Code and BodyTemplate required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var t = new NotificationTemplate(Guid.NewGuid(), req.TenantId, req.Code.Trim(), ch,
+        req.Subject ?? "", req.BodyTemplate, true);
+    db.NotificationTemplates.Add(t);
+    DomainEvents.Record(db, req.TenantId, "NotificationTemplateCreated", "NotificationTemplateCreated",
+        nameof(NotificationTemplate), t.Id.ToString(),
+        payload: new { tenantId = req.TenantId, templateId = t.Id, code = t.Code }, details: t.Code);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Template '{req.Code}/{req.Channel}' already exists." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/notification-templates/{t.Id}", t);
+});
+var receipts = app.MapGroup("/api/notification-receipts").WithTags("NotificationReceipts").RequireAuthorization();
+receipts.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("notification:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.NotificationReceipts.Where(r => r.TenantId == tenantId)
+        .OrderByDescending(r => r.At).Take(100).ToListAsync(ct));
+});
+
 var inbox = app.MapGroup("/api/inbox").WithTags("Inbox").RequireAuthorization();
 inbox.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid personId, string? filter, CancellationToken ct) =>
 {
@@ -1754,3 +1795,4 @@ public sealed record SubmitRequestReq(Guid TenantId, Guid? ReviewerId, string? W
 public sealed record CreateWorkflowReq(Guid TenantId, string Code, string Name, string NodesJson);
 public sealed record CreateCommunicationReq(Guid TenantId, string Kind, string Title, string? Body, Guid AuthorId, bool RequiresAction, DateTimeOffset? DueAt, Guid[]? TargetPersonIds);
 public sealed record PublishCommunicationReq(Guid TenantId);
+public sealed record CreateTemplateReq(Guid TenantId, string Code, string Channel, string? Subject, string BodyTemplate);

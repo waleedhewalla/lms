@@ -62,6 +62,13 @@ notifies the new assignee (`ApprovalDelegated`); only the current assignee may d
 `POST/GET .../evidence` (objectKey + filename, `TaskEvidenceAdded`); `GET /api/tasks/{id}` detail.
 Covered by `Depth_RequestChanges_Delegate_TaskEnrichment`.
 
+### FR-NTF-001 — Notification Templates, Channels & Receipts ✅ implemented (depth, BBP M10)
+`POST/GET /api/notification-templates` (unique code+channel per tenant, `notification:manage`);
+`{token}` rendering (case-insensitive); consumer fans out per `NotificationPlanner` matrix
+(FYI→InApp … Urgent→InApp+Email+Sms); non-InApp rows recorded Queued + `NotificationReceipt`
+(`provider-pending`) for future provider wiring; `GET /api/notification-receipts` log.
+Covered by `Notifications_Template_ChannelMatrix_And_Rendering`.
+
 ### FR-SLA-002 — Escalation Ladder ✅ implemented (depth, BBP M09)
 `SlaMonitor` (1-min tick, per tenant): overdue open tasks → Breached (`TaskBreached`);
 >48h overdue without reminder marker → reminder notification + `TaskEscalated{level:reminder}`;

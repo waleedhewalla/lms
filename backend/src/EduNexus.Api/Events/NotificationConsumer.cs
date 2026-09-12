@@ -80,9 +80,29 @@ public sealed class NotificationConsumer(
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await TenantScope.BeginAsync(db, tenantId, ct);
         var now = DateTimeOffset.UtcNow;
-        void Notify(Guid personId, string title, string body) =>
-            db.Notifications.Add(new Notification(Guid.NewGuid(), tenantId, personId, title, body,
-                NotificationChannel.InApp, NotificationStatus.Sent, now));
+        var templates = await db.NotificationTemplates
+            .Where(t => t.TenantId == tenantId && t.IsActive).ToListAsync(ct);
+        string ApplyTemplate(string code, NotificationChannel channel, string fallback, IReadOnlyDictionary<string, string> values)
+        {
+            var tpl = templates.FirstOrDefault(t => t.Code == code && t.Channel == channel);
+            return tpl is null ? fallback : NotificationPlanner.Render(tpl.BodyTemplate, values);
+        }
+        var priority = NotificationPlanner.PriorityFor(msg.RoutingKey, accelerated: false);
+        void Notify(Guid personId, string title, string body, string templateCode = "", IReadOnlyDictionary<string, string>? values = null)
+        {
+            values ??= new Dictionary<string, string>();
+            foreach (var channel in NotificationPlanner.ChannelsFor(priority))
+            {
+                var rendered = string.IsNullOrEmpty(templateCode) ? body : ApplyTemplate(templateCode, channel, body, values);
+                // Only InApp is delivered today; other channels are queued honestly for provider wiring.
+                var status = channel == NotificationChannel.InApp ? NotificationStatus.Sent : NotificationStatus.Queued;
+                var n = new Notification(Guid.NewGuid(), tenantId, personId, title, rendered, channel, status, now, priority);
+                db.Notifications.Add(n);
+                if (status != NotificationStatus.Sent)
+                    db.NotificationReceipts.Add(new NotificationReceipt(Guid.NewGuid(), tenantId, n.Id, channel,
+                        NotificationStatus.Queued, "provider-pending", now));
+            }
+        }
 
         switch (msg.RoutingKey)
         {
@@ -130,10 +150,12 @@ public sealed class NotificationConsumer(
         await tx.CommitAsync(ct);
     }
 
-    private static void NotifyReq(JsonElement root, string field, string title, string body, Action<Guid, string, string> notify)
+    private static void NotifyReq(JsonElement root, string field, string title, string body,
+        Action<Guid, string, string, string, IReadOnlyDictionary<string, string>?> notify,
+        string templateCode = "", IReadOnlyDictionary<string, string>? values = null)
     {
         var pid = GetGuid(root, field);
-        if (pid != Guid.Empty && title != "") notify(pid, title, body);
+        if (pid != Guid.Empty && title != "") notify(pid, title, body, templateCode, values);
     }
 
     private static async Task<List<Guid>> MemberIdsAsync(AppDbContext db, Guid tenantId, Guid committeeId, CancellationToken ct) =>

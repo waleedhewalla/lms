@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using EduNexus.Api.Auth;
+using EduNexus.Foundation;
 using EduNexus.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -532,6 +533,47 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.True(inbox.GetProperty("total").GetInt32() >= 1);
         var myWork = await client.GetFromJsonAsync<JsonElement>($"/api/my-work?tenantId={tenant}&personId={head1}");
         Assert.True(myWork.GetProperty("counts").GetProperty("openTasks").GetInt32() >= 1);
+    }
+
+    [Fact]
+    public async Task Notifications_Template_ChannelMatrix_And_Rendering()
+    {
+        // Planner unit coverage (no broker needed)
+        Assert.Equal([NotificationChannel.InApp],
+            EduNexus.Api.Events.NotificationPlanner.ChannelsFor(EduNexus.Foundation.NotificationPriority.FYI));
+        Assert.Equal(3, EduNexus.Api.Events.NotificationPlanner.ChannelsFor(EduNexus.Foundation.NotificationPriority.Urgent).Length);
+        Assert.Equal("Hello Omar, code CORR-1",
+            EduNexus.Api.Events.NotificationPlanner.Render("Hello {name}, code {code}",
+                new Dictionary<string, string> { ["NAME"] = "Omar", ["code"] = "CORR-1" }));
+
+        // Template CRUD gating
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), ["tenant:create", "notification:manage", "notification:read"]));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Ntf Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, ["notification:manage", "notification:read"]));
+        var tpl = await client.PostAsJsonAsync("/api/notification-templates", new
+        {
+            tenantId = tenant, code = "review-requested", channel = "Email",
+            subject = "Review", bodyTemplate = "Hi {name}, review {number}."
+        });
+        Assert.Equal(HttpStatusCode.Created, tpl.StatusCode);
+        var dup = await client.PostAsJsonAsync("/api/notification-templates", new
+        {
+            tenantId = tenant, code = "review-requested", channel = "Email",
+            subject = "Review", bodyTemplate = "x"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, dup.StatusCode);
+        var bad = await client.PostAsJsonAsync("/api/notification-templates", new
+        {
+            tenantId = tenant, code = "x", channel = "Pigeon", subject = "", bodyTemplate = "x"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        var list = await client.GetFromJsonAsync<JsonElement>($"/api/notification-templates?tenantId={tenant}");
+        Assert.Equal(1, list.GetArrayLength());
+        var receipts = await client.GetFromJsonAsync<JsonElement>($"/api/notification-receipts?tenantId={tenant}");
+        Assert.Equal(0, receipts.GetArrayLength());
     }
 
     [Fact]

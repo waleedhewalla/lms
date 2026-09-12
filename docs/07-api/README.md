@@ -28,6 +28,8 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 - `POST /api/approvals/{id}/delegate` (current assignee only; moves approval + task, notifies)
 - `PATCH /api/tasks/{id}` (title/description/priority/progress/status), `GET /api/tasks/{id}` detail
 - `POST/GET /api/tasks/{id}/comments|/evidence` (discussion + object-store evidence links)
+- `POST/GET /api/notification-templates` (`notification:manage`, unique code+channel, `{token}` rendering)
+- `GET /api/notification-receipts` (`notification:read`, per-channel delivery log)
 - `GET /api/tasks?tenantId=&assigneeId=` (`task:read`) / `POST /api/tasks/{id}/complete` (`task:update`)
 - `GET /api/sla/breaches?tenantId=` (`approval:read`)
 - `GET /api/notifications?tenantId=&personId=` (`notification:read`; written by `NotificationConsumer`)
