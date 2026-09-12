@@ -50,6 +50,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<FormSubmission> FormSubmissions => Set<FormSubmission>();
     public DbSet<WorkflowDefinition> WorkflowDefinitions => Set<WorkflowDefinition>();
     public DbSet<WorkflowInstance> WorkflowInstances => Set<WorkflowInstance>();
+    public DbSet<Communication> Communications => Set<Communication>();
+    public DbSet<CommunicationRecipient> CommunicationRecipients => Set<CommunicationRecipient>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -324,6 +326,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.ContextJson).HasColumnType("jsonb").IsRequired();
+        });
+        b.Entity<Communication>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Kind });
+            e.HasIndex(x => new { x.TenantId, x.Status });
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<CommunicationRecipient>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CommunicationId, x.PersonId }).IsUnique();
         });
     }
 }

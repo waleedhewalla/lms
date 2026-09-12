@@ -280,3 +280,15 @@ public sealed record WorkflowDefinition(
 public sealed record WorkflowInstance(
     Guid Id, Guid TenantId, Guid DefinitionId, string EntityType, Guid EntityId,
     string CurrentNodeId, WorkflowInstanceStatus Status, string ContextJson, DateTimeOffset UpdatedAt);
+
+// ============================ R0.1 Tracks C+D — Communications, Inbox, My Work ============================
+
+public enum CommunicationKind { Announcement, Circular, Directive }
+public enum CommunicationStatus { Draft, Published }
+
+public sealed record Communication(
+    Guid Id, Guid TenantId, CommunicationKind Kind, string Title, string Body,
+    Guid AuthorId, bool RequiresAction, DateTimeOffset? DueAt,
+    CommunicationStatus Status, DateTimeOffset CreatedAt, DateTimeOffset? PublishedAt);
+
+public sealed record CommunicationRecipient(Guid Id, Guid TenantId, Guid CommunicationId, Guid PersonId);

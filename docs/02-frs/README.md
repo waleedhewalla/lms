@@ -129,3 +129,12 @@ Delivered/Failed. Covered by `Integrations_Webhook_FailedDelivery_Logged`.
 `OnApprovalDecided` advances the instance (creates next approval/task) or marks Rejected;
 `GET /api/workflows/instances?status=` tracks Running/Completed/Rejected.
 Covered by `Workflow_FacultyAdminRequest_Chain_To_Completion` (3 approvals → task → completion + rejection branch).
+
+### FR-COM-001 — Communications (Announcement/Circular/Directive) ✅ implemented (Track C)
+`POST /api/communications` (kind, requiresAction, targetPersonIds validated);
+`POST /api/communications/{id}/publish` (Draft→Published, if directive fans out `WorkTask` per target + `Notification` + `DirectiveTasksCreated` event; idempotent 409 on re-publish).
+Covered by `Communications_Directive_CreatesTasks_And_Inbox`.
+
+### FR-INB-001 — Unified Inbox & My Work ✅ implemented (Track D)
+`GET /api/inbox?tenantId=&personId=&filter=` aggregates approvals/tasks/communications/requests/notifications with filters `All|Action Required|Approval|Task|Request|Overdue|Communication`;
+`GET /api/my-work?tenantId=&personId=` returns counters (pendingApprovals/openTasks/overdueTasks/myRequests/waitingFor) + priorityWork + recentCommunications (BBP M04 + My Work dashboard).

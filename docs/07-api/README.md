@@ -56,6 +56,11 @@ Enums serialize as strings (JsonStringEnumConverter).
 - `POST /api/requests/{id}/submit` with `workflowCode` → `WorkflowInstance` (Running) + chained approvals/tasks via `WorkflowRunner`
 - Approvals in a workflow advance the instance (`WorkflowAdvanced`) or mark it `Rejected` on any reject
 
+## R0.1 Tracks C+D implemented
+- `POST/GET /api/communications` (`communication:create/read`), `POST /api/communications/{id}/publish` (Draft→Published, Directive fans out tasks)
+- `GET /api/inbox?tenantId=&personId=&filter=` (`inbox:read`, aggregation across approvals/tasks/communications/requests/notifications with BBP filters)
+- `GET /api/my-work?tenantId=&personId=` (`inbox:read`, counters + priorityWork + recentCommunications for My Work dashboard)
+
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
 tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
 (`DomainEvents.Record`). OpenAPI at `/openapi/v1.json` (dev).
@@ -85,6 +90,8 @@ persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt`
 | DocumentCreated / DocumentVersionAdded | POST /api/documents[/{id}/versions] | tenantId, documentId, version | search indexer (R5) |
 | EvidenceAdded / FindingOpened / CorrectiveActionOpened | POST /api/quality/… | tenantId, ids | audit projector |
 | KpiUpdated | POST /api/strategy/kpis/{id}/reading | tenantId, kpiId, current, target | analytics |
+| CommunicationCreated / CommunicationPublished | POST /api/communications[/{id}/publish] | tenantId, communicationId, kind | notifications, tasks (directive), audit |
+| DirectiveTasksCreated | POST /api/communications/{id}/publish (directive) | tenantId, communicationId, tasks | inbox, my-work |
 
 `OutboxEvents` is intentionally **exempt from RLS** (platform-level, like `Tenants`)
 so the relay reads all tenants; isolation is enforced by consumer-side `tenant_id` filtering.

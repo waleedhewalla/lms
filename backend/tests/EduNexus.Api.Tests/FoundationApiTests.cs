@@ -480,6 +480,61 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Communications_Directive_CreatesTasks_And_Inbox()
+    {
+        var perms = AllPerms.Concat(["communication:create", "communication:read", "inbox:read", "task:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Comm Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        async Task<Guid> MkPerson(string name)
+        {
+            var r = await client.PostAsJsonAsync("/api/people",
+                new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null });
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return IdOf(await r.Content.ReadFromJsonAsync<JsonElement>());
+        }
+        var author = await MkPerson("Dean Author");
+        var head1 = await MkPerson("Head One");
+        var head2 = await MkPerson("Head Two");
+
+        // Announcement without action creates no tasks
+        var ann = await client.PostAsJsonAsync("/api/communications", new
+        {
+            tenantId = tenant, kind = "Announcement", title = "Holiday notice", body = "Off on Friday", authorId = author,
+            requiresAction = false, dueAt = (DateTimeOffset?)null, targetPersonIds = new[] { head1 }
+        });
+        Assert.Equal(HttpStatusCode.Created, ann.StatusCode);
+        var annId = IdOf(await ann.Content.ReadFromJsonAsync<JsonElement>());
+        var pubAnn = await client.PostAsJsonAsync($"/api/communications/{annId}/publish", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.OK, pubAnn.StatusCode);
+        Assert.Equal(0, (await pubAnn.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("tasksCreated").GetInt32());
+
+        // Directive with requiresAction fans out tasks to each target (killer workflow)
+        var dir = await client.PostAsJsonAsync("/api/communications", new
+        {
+            tenantId = tenant, kind = "Directive", title = "Submit accreditation evidence", body = "Due 20 Sep",
+            authorId = author, requiresAction = true, dueAt = DateTimeOffset.UtcNow.AddDays(7), targetPersonIds = new[] { head1, head2 }
+        });
+        Assert.Equal(HttpStatusCode.Created, dir.StatusCode);
+        var dirId = IdOf(await dir.Content.ReadFromJsonAsync<JsonElement>());
+        var pubDir = await client.PostAsJsonAsync($"/api/communications/{dirId}/publish", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.OK, pubDir.StatusCode);
+        Assert.Equal(2, (await pubDir.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("tasksCreated").GetInt32());
+        var dupPub = await client.PostAsJsonAsync($"/api/communications/{dirId}/publish", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.Conflict, dupPub.StatusCode);
+
+        var tasksHead1 = await client.GetFromJsonAsync<JsonElement>($"/api/tasks?tenantId={tenant}&assigneeId={head1}");
+        Assert.True(tasksHead1.GetArrayLength() >= 1);
+        var inbox = await client.GetFromJsonAsync<JsonElement>($"/api/inbox?tenantId={tenant}&personId={head1}&filter=Task");
+        Assert.True(inbox.GetProperty("total").GetInt32() >= 1);
+        var myWork = await client.GetFromJsonAsync<JsonElement>($"/api/my-work?tenantId={tenant}&personId={head1}");
+        Assert.True(myWork.GetProperty("counts").GetProperty("openTasks").GetInt32() >= 1);
+    }
+
+    [Fact]
     public async Task PeopleImport_DryRun_Then_Import()
     {
         var bootstrap = factory.CreateClient();

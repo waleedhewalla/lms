@@ -1424,6 +1424,156 @@ workflows.MapGet("/instances", async (AppDbContext db, HttpContext ctx, Guid ten
     return Results.Ok(await q.OrderByDescending(i => i.UpdatedAt).ToListAsync(ct));
 });
 
+// ============================ R0.1 Tracks C+D — Communications, Inbox, My Work ============================
+
+var communications = app.MapGroup("/api/communications").WithTags("Communications").RequireAuthorization();
+communications.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, string? kind, string? status, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("communication:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var q = db.Communications.Where(c => c.TenantId == tenantId);
+    if (Enum.TryParse<CommunicationKind>(kind, true, out var k)) q = q.Where(c => c.Kind == k);
+    if (Enum.TryParse<CommunicationStatus>(status, true, out var s)) q = q.Where(c => c.Status == s);
+    return Results.Ok(await q.OrderByDescending(c => c.CreatedAt).ToListAsync(ct));
+});
+communications.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateCommunicationReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("communication:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<CommunicationKind>(req.Kind, true, out var kind))
+        return Results.BadRequest(new { error = "Kind must be Announcement|Circular|Directive." });
+    if (string.IsNullOrWhiteSpace(req.Title)) return Results.BadRequest(new { error = "Title required." });
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.AuthorId, ct))
+        return Results.NotFound(new { error = "Author not found in tenant." });
+    var recipients = req.TargetPersonIds ?? [];
+    foreach (var pid in recipients.Distinct())
+        if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == pid, ct))
+            return Results.BadRequest(new { error = $"Target person {pid} not found in tenant." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var comm = new Communication(Guid.NewGuid(), req.TenantId, kind, req.Title.Trim(), req.Body ?? "",
+        req.AuthorId, req.RequiresAction, req.DueAt, CommunicationStatus.Draft, DateTimeOffset.UtcNow, null);
+    db.Communications.Add(comm);
+    foreach (var pid in recipients.Distinct())
+        db.CommunicationRecipients.Add(new CommunicationRecipient(Guid.NewGuid(), req.TenantId, comm.Id, pid));
+    DomainEvents.Record(db, req.TenantId, "CommunicationCreated", "CommunicationCreated",
+        nameof(Communication), comm.Id.ToString(),
+        payload: new { tenantId = req.TenantId, communicationId = comm.Id, kind = kind.ToString(), requiresAction = req.RequiresAction },
+        details: comm.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/communications/{comm.Id}", comm);
+});
+communications.MapPost("/{id:guid}/publish", async (AppDbContext db, HttpContext ctx, Guid id, PublishCommunicationReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("communication:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var comm = await db.Communications.FirstOrDefaultAsync(c => c.TenantId == req.TenantId && c.Id == id, ct);
+    if (comm is null) return Results.NotFound(new { error = "Communication not found." });
+    if (comm.Status == CommunicationStatus.Published)
+        return Results.Conflict(new { error = "Already published." });
+    db.Entry(comm).CurrentValues.SetValues(comm with { Status = CommunicationStatus.Published, PublishedAt = DateTimeOffset.UtcNow });
+    var recipients = await db.CommunicationRecipients.Where(r => r.TenantId == req.TenantId && r.CommunicationId == id)
+        .Select(r => r.PersonId).ToListAsync(ct);
+    var due = comm.DueAt ?? DateTimeOffset.UtcNow.AddDays(14);
+    foreach (var pid in recipients)
+    {
+        if (comm.RequiresAction)
+        {
+            var task = new WorkTask(Guid.NewGuid(), req.TenantId, $"[{comm.Kind}] {comm.Title}", pid,
+                null, WorkTaskStatus.Open, due, DateTimeOffset.UtcNow);
+            db.WorkTasks.Add(task);
+            db.Notifications.Add(new Notification(Guid.NewGuid(), req.TenantId, pid,
+                $"New {comm.Kind}: {comm.Title}", comm.Body.Length > 200 ? comm.Body[..200] : comm.Body,
+                NotificationChannel.InApp, NotificationStatus.Sent, DateTimeOffset.UtcNow));
+        }
+        else
+        {
+            db.Notifications.Add(new Notification(Guid.NewGuid(), req.TenantId, pid,
+                $"New {comm.Kind}: {comm.Title}", comm.Body.Length > 200 ? comm.Body[..200] : comm.Body,
+                NotificationChannel.InApp, NotificationStatus.Sent, DateTimeOffset.UtcNow));
+        }
+    }
+    DomainEvents.Record(db, req.TenantId, "CommunicationPublished", "CommunicationPublished",
+        nameof(Communication), comm.Id.ToString(),
+        payload: new { tenantId = req.TenantId, communicationId = comm.Id, kind = comm.Kind.ToString(), recipients = recipients.Count, tasksCreated = comm.RequiresAction ? recipients.Count : 0 },
+        details: comm.Title);
+    if (comm.RequiresAction && recipients.Count > 0)
+        DomainEvents.Record(db, req.TenantId, "DirectiveTasksCreated", "DirectiveTasksCreated",
+            nameof(WorkTask), id.ToString(),
+            payload: new { tenantId = req.TenantId, communicationId = id, tasks = recipients.Count }, details: comm.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(new { communication = comm, tasksCreated = comm.RequiresAction ? recipients.Count : 0 });
+});
+
+var inbox = app.MapGroup("/api/inbox").WithTags("Inbox").RequireAuthorization();
+inbox.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid personId, string? filter, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("inbox:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var now = DateTimeOffset.UtcNow;
+    var approvals = await db.Approvals.Where(a => a.TenantId == tenantId && a.AssigneeId == personId && a.Status == ApprovalStatus.Pending)
+        .Select(a => new { type = "Approval", id = a.Id, title = $"{a.EntityType} approval", dueAt = (DateTimeOffset?)a.DueAt, status = a.Status.ToString() }).ToListAsync(ct);
+    var tasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done)
+        .Select(t => new { type = "Task", id = t.Id, title = t.Title, dueAt = (DateTimeOffset?)t.DueAt, status = t.Status.ToString() }).ToListAsync(ct);
+    var corrs = await (from cr in db.CommunicationRecipients
+                       join c in db.Communications on cr.CommunicationId equals c.Id
+                       where cr.TenantId == tenantId && cr.PersonId == personId && c.Status == CommunicationStatus.Published
+                       select new { type = "Communication", id = c.Id, title = c.Title, dueAt = c.DueAt, status = c.Status.ToString() }).ToListAsync(ct);
+    var requests = await db.Requests.Where(r => r.TenantId == tenantId && r.SubmitterId == personId && r.Status != RequestStatus.Closed)
+        .Select(r => new { type = "Request", id = r.Id, title = r.Title, dueAt = (DateTimeOffset?)null, status = r.Status.ToString() }).ToListAsync(ct);
+    var notifs = await db.Notifications.Where(n => n.TenantId == tenantId && n.PersonId == personId && n.Status == NotificationStatus.Sent)
+        .OrderByDescending(n => n.CreatedAt).Take(20)
+        .Select(n => new { type = "Notification", id = n.Id, title = n.Title, dueAt = (DateTimeOffset?)null, status = n.Status.ToString() }).ToListAsync(ct);
+    var all = approvals.Cast<object>().Concat(tasks).Concat(corrs).Concat(requests).Concat(notifs).ToList();
+    // Unified filter mirroring BBP M04: All | Action Required | Approval | Correspondence | Task | Request | Overdue
+    var filterKey = (filter ?? "All").Trim().ToLowerInvariant();
+    IEnumerable<object> filtered = filterKey switch
+    {
+        "action required" => approvals.Cast<object>().Concat(tasks),
+        "approval" => approvals,
+        "correspondence" or "communication" => corrs,
+        "task" => tasks,
+        "request" => requests,
+        "overdue" => tasks.Where(t => t.dueAt != null && t.dueAt < now).Concat(approvals.Where(a => a.dueAt != null && a.dueAt < now)),
+        _ => all,
+    };
+    var items = filtered.ToList();
+    return Results.Ok(new { total = items.Count, items });
+});
+
+var myWork = app.MapGroup("/api/my-work").WithTags("MyWork").RequireAuthorization();
+myWork.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid personId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("inbox:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var now = DateTimeOffset.UtcNow;
+    var pendingApprovals = await db.Approvals.CountAsync(a => a.TenantId == tenantId && a.AssigneeId == personId && a.Status == ApprovalStatus.Pending, ct);
+    var openTasks = await db.WorkTasks.CountAsync(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done, ct);
+    var overdueTasks = await db.WorkTasks.CountAsync(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done && t.DueAt < now, ct);
+    var myRequests = await db.Requests.CountAsync(r => r.TenantId == tenantId && r.SubmitterId == personId && r.Status != RequestStatus.Closed, ct);
+    var waitingFor = await db.Requests.CountAsync(r => r.TenantId == tenantId && r.SubmitterId == personId && r.Status == RequestStatus.Submitted, ct);
+    var unreadNotifications = await db.Notifications.CountAsync(n => n.TenantId == tenantId && n.PersonId == personId && n.Status == NotificationStatus.Sent, ct);
+    var recentComms = await (from cr in db.CommunicationRecipients
+                             join c in db.Communications on cr.CommunicationId equals c.Id
+                             where cr.TenantId == tenantId && cr.PersonId == personId && c.Status == CommunicationStatus.Published
+                             orderby c.PublishedAt descending
+                             select new { id = c.Id, title = c.Title, kind = c.Kind.ToString(), publishedAt = c.PublishedAt }).Take(5).ToListAsync(ct);
+    var priorityTasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done)
+        .OrderBy(t => t.DueAt).Take(5).Select(t => new { id = t.Id, title = t.Title, dueAt = t.DueAt, status = t.Status.ToString() }).ToListAsync(ct);
+    return Results.Ok(new
+    {
+        personId,
+        counts = new { pendingApprovals, openTasks, myRequests, overdueTasks, waitingFor, unreadNotifications },
+        priorityWork = priorityTasks,
+        recentCommunications = recentComms,
+    });
+});
+
 app.Run();
 
 public sealed record CreateTenantReq(string Slug, string Name);
@@ -1469,3 +1619,5 @@ public sealed record ValidateSubmissionReq(Guid TenantId, string DataJson);
 public sealed record CreateRequestReq(Guid TenantId, string Category, string Title, Guid SubmitterId, Guid? FormId, string? DataJson);
 public sealed record SubmitRequestReq(Guid TenantId, Guid? ReviewerId, string? WorkflowCode);
 public sealed record CreateWorkflowReq(Guid TenantId, string Code, string Name, string NodesJson);
+public sealed record CreateCommunicationReq(Guid TenantId, string Kind, string Title, string? Body, Guid AuthorId, bool RequiresAction, DateTimeOffset? DueAt, Guid[]? TargetPersonIds);
+public sealed record PublishCommunicationReq(Guid TenantId);
