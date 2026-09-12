@@ -873,4 +873,44 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var done = await client.PostAsJsonAsync($"/api/tasks/{taskId}/complete", new { tenantId = tenant });
         Assert.Equal(HttpStatusCode.OK, done.StatusCode);
     }
+
+    [Fact]
+    public async Task Documents_Share_Classify_Retain()
+    {
+        var perms = AllPerms.Concat(["document:create", "document:read", "document:update", "document:share"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Doc Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        var author = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Doc Author", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+
+        // Create document
+        var doc = await client.PostAsJsonAsync("/api/documents", new { tenantId = tenant, title = "Policy Draft" });
+        Assert.Equal(HttpStatusCode.Created, doc.StatusCode);
+        var docId = IdOf(await doc.Content.ReadFromJsonAsync<JsonElement>());
+        var docDetail = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}?tenantId={tenant}");
+        Assert.Equal("Internal", docDetail.GetProperty("classification").GetString());
+
+        // Share document
+        var person2 = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Reader", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var share = await client.PostAsJsonAsync($"/api/documents/{docId}/share", new { tenantId = tenant, personId = person2, expiresAt = DateTimeOffset.UtcNow.AddDays(7) });
+        Assert.Equal(HttpStatusCode.Created, share.StatusCode);
+        var shares = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}/shares?tenantId={tenant}");
+        Assert.Equal(1, shares.GetArrayLength());
+
+        // Classify and set retention
+        var update = await client.PatchAsJsonAsync($"/api/documents/{docId}?tenantId={tenant}", new { classification = "Confidential", retainUntil = DateTimeOffset.UtcNow.AddYears(7) });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        var updated = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}?tenantId={tenant}");
+        Assert.Equal("Confidential", updated.GetProperty("classification").GetString());
+        Assert.True(updated.TryGetProperty("retainUntil", out _));
+
+        // List shares
+        var sharesList = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}/shares?tenantId={tenant}");
+        Assert.Equal(1, sharesList.GetArrayLength());
+    }
 }

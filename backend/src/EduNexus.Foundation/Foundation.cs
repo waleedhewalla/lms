@@ -201,12 +201,20 @@ public sealed record PolicyAcknowledgement(Guid Id, Guid TenantId, Guid PolicyId
 // ============================ R4 — Institutional Intelligence ============================
 
 public enum DocumentStatus { Draft, Published, Archived }
+public enum DocumentClassification { Public, Internal, Confidential, Restricted }
 
-public sealed record Document(Guid Id, Guid TenantId, string Title, DocumentStatus Status, int CurrentVersion);
+public sealed record Document(
+    Guid Id, Guid TenantId, string Title, DocumentStatus Status, int CurrentVersion,
+    DocumentClassification Classification = DocumentClassification.Internal,
+    DateTimeOffset? RetainUntil = null);
 
 public sealed record DocumentVersion(
     Guid Id, Guid TenantId, Guid DocumentId, int Version,
     string ObjectKey, long SizeBytes, string Sha256, DateTimeOffset CreatedAt);
+
+public sealed record DocumentShare(
+    Guid Id, Guid TenantId, Guid DocumentId, Guid PersonId,
+    DateTimeOffset SharedAt, DateTimeOffset? ExpiresAt);
 
 public sealed record Standard(Guid Id, Guid TenantId, string Code, string Title);
 

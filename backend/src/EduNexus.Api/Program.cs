@@ -1031,6 +1031,48 @@ docs.MapGet("/{id:guid}/download-url", async (AppDbContext db, HttpContext ctx, 
     if (v is null) return Results.NotFound(new { error = "No versions." });
     return Results.Ok(new { objectKey = v.ObjectKey, getUrl = await storage.PresignedGetAsync(v.ObjectKey, ct: ct), version = v.Version });
 });
+docs.MapPost("/{id:guid}/share", async (AppDbContext db, HttpContext ctx, Guid id, ShareDocumentReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:share")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    if (!await db.Documents.AnyAsync(d => d.TenantId == req.TenantId && d.Id == id, ct))
+        return Results.NotFound(new { error = "Document not found." });
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.PersonId, ct))
+        return Results.NotFound(new { error = "Person not found in tenant." });
+    var share = new DocumentShare(Guid.NewGuid(), req.TenantId, id, req.PersonId,
+        DateTimeOffset.UtcNow, req.ExpiresAt);
+    db.DocumentShares.Add(share);
+    DomainEvents.Record(db, req.TenantId, "DocumentShared", "DocumentShared",
+        nameof(DocumentShare), share.Id.ToString(),
+        payload: new { tenantId = req.TenantId, documentId = id, personId = req.PersonId, expiresAt = req.ExpiresAt },
+        details: $"shared with person {req.PersonId}");
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/documents/{id}/shares/{share.Id}", share);
+});
+docs.MapPatch("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, UpdateDocumentReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("document:update")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var d = await db.Documents.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
+    if (d is null) return Results.NotFound(new { error = "Document not found." });
+    var updated = d with
+    {
+        Title = string.IsNullOrWhiteSpace(req.Title) ? d.Title : req.Title.Trim(),
+        Classification = req.Classification is not null && Enum.TryParse<DocumentClassification>(req.Classification, true, out var c) ? c : d.Classification,
+        RetainUntil = req.RetainUntil,
+        Status = req.Status is not null && Enum.TryParse<DocumentStatus>(req.Status, true, out var s) ? s : d.Status,
+    };
+    db.Entry(d).CurrentValues.SetValues(updated);
+    DomainEvents.Record(db, tenantId, "DocumentUpdated", "DocumentUpdated",
+        nameof(Document), d.Id.ToString(),
+        payload: new { tenantId, documentId = id, classification = updated.Classification, retainUntil = updated.RetainUntil }, details: updated.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(updated);
+});
 
 var search = app.MapGroup("/api/search").WithTags("Search").RequireAuthorization();
 search.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, string q, CancellationToken ct) =>
@@ -1787,6 +1829,8 @@ public sealed record CreateObjectiveReq(Guid TenantId, Guid PlanId, string Code,
 public sealed record CreateKpiReq(Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string? Unit);
 public sealed record KpiReadingReq(Guid TenantId, double Current);
 public sealed record AskReq(Guid TenantId, string Question, string? Capability);
+public sealed record ShareDocumentReq(Guid TenantId, Guid PersonId, DateTimeOffset? ExpiresAt);
+public sealed record UpdateDocumentReq(Guid TenantId, string? Title, string? Classification, DateTimeOffset? RetainUntil, string? Status);
 public sealed record RegisterEndpointReq(Guid TenantId, string EventType, string TargetUrl, string? Secret);
 public sealed record CreateFormReq(Guid TenantId, string Code, string Name, string Category, string SchemaJson);
 public sealed record ValidateSubmissionReq(Guid TenantId, string DataJson);

@@ -34,6 +34,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<PolicyAcknowledgement> PolicyAcknowledgements => Set<PolicyAcknowledgement>();
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentVersion> DocumentVersions => Set<DocumentVersion>();
+    public DbSet<DocumentShare> DocumentShares => Set<DocumentShare>();
     public DbSet<Standard> Standards => Set<Standard>();
     public DbSet<Criterion> Criteria => Set<Criterion>();
     public DbSet<Evidence> Evidences => Set<Evidence>();
@@ -256,6 +257,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => x.TenantId);
             e.Property(x => x.Title).HasMaxLength(300).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Classification).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<DocumentShare>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.DocumentId, x.PersonId }).IsUnique();
         });
         b.Entity<DocumentVersion>(e =>
         {
