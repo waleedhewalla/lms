@@ -40,7 +40,7 @@ public class FoundationTests
     [Fact]
     public void FormValidation_Options_And_Conditional()
     {
-        const string schema = """[{"key":"kind","label":"Kind","type":"Dropdown","required":true},{"key":"why","label":"Why","type":"Text","required":true,"visibleWhen":{"field":"kind","equals":"other"}}]""";
+        const string schema = """[{"key":"kind","label":"Kind","type":"Dropdown","required":true,"options":["standard","other"]},{"key":"why","label":"Why","type":"Text","required":true,"visibleWhen":{"field":"kind","equals":"other"}}]""";
         Assert.Empty(FormValidation.Validate(schema, """{"kind":"standard"}"""));
         var errs = FormValidation.Validate(schema, """{"kind":"weird"}""");
         Assert.Contains(errs, e => e.Contains("kind"));
