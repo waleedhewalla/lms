@@ -122,6 +122,10 @@ Delivered/Failed. Covered by `Integrations_Webhook_FailedDelivery_Logged`.
 `REQ-yyyy-nnnnnn` (atomic per-tenant sequence) + submission snapshot;
 `POST /api/requests/{id}/submit` (Draft-only, optional reviewer → approval + task,
 `RequestSubmitted` event). Covered by `Requests_PurchaseFlow_FormValidate_Submit_Approval`.
-Actor: authorized employee. Behavior: validate tenant → create Employee/Student → `PersonCreated` audit. PG migration pending (see roadmap).
 
-Full FRS target 150–250 pages; add FR-COR-001 etc. in Release 2.
+### FR-WF-001 — Workflow Definitions & Instances ✅ implemented (Track B)
+`POST /api/workflows/definitions` (unique code, validated node graph: start/approval/task/notification/end);
+`POST /api/requests/{id}/submit` with `workflowCode` starts a `WorkflowInstance` (Running) and creates the first pending approval;
+`OnApprovalDecided` advances the instance (creates next approval/task) or marks Rejected;
+`GET /api/workflows/instances?status=` tracks Running/Completed/Rejected.
+Covered by `Workflow_FacultyAdminRequest_Chain_To_Completion` (3 approvals → task → completion + rejection branch).

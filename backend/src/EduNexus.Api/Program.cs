@@ -508,6 +508,8 @@ approvals.MapPost("/{id:guid}/decide", async (AppDbContext db, HttpContext ctx, 
         nameof(Approval), a.Id.ToString(),
         payload: new { tenantId = req.TenantId, approvalId = a.Id, entityType = a.EntityType, entityId = a.EntityId, approved = req.Approve, decidedBy = req.DecidedBy },
         details: $"{a.Id}=>{(req.Approve ? "approved" : "rejected")}");
+    // Workflow-driven approvals advance their instance (no-op for ad-hoc approvals).
+    await WorkflowRunner.OnApprovalDecidedAsync(db, req.TenantId, decided, req.Approve, ct);
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
     return Results.Ok(decided);
@@ -1348,7 +1350,21 @@ requests.MapPost("/{id:guid}/submit", async (AppDbContext db, HttpContext ctx, G
         return Results.Conflict(new { error = $"Only Draft requests can be submitted (now {r.Status})." });
     db.Entry(r).CurrentValues.SetValues(r with { Status = RequestStatus.Submitted, SubmittedAt = DateTimeOffset.UtcNow });
     Guid? approvalId = null;
-    if (req.ReviewerId.HasValue)
+    Guid? instanceId = null;
+    if (!string.IsNullOrWhiteSpace(req.WorkflowCode))
+    {
+        // Workflow-driven path (M06): runner creates the approval chain.
+        try
+        {
+            var started = await WorkflowRunner.StartAsync(db, req.TenantId, req.WorkflowCode,
+                nameof(Request), r.Id, r.SubmitterId, ct);
+            instanceId = started.InstanceId;
+            approvalId = started.PendingApprovalId;
+        }
+        catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+    else if (req.ReviewerId.HasValue)
     {
         if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.ReviewerId.Value, ct))
             return Results.NotFound(new { error = "Reviewer not found in tenant." });
@@ -1362,10 +1378,50 @@ requests.MapPost("/{id:guid}/submit", async (AppDbContext db, HttpContext ctx, G
     }
     DomainEvents.Record(db, req.TenantId, "RequestSubmitted", "RequestSubmitted",
         nameof(Request), r.Id.ToString(),
-        payload: new { tenantId = req.TenantId, requestId = r.Id, number = r.Number, approvalId }, details: r.Number);
+        payload: new { tenantId = req.TenantId, requestId = r.Id, number = r.Number, approvalId, instanceId }, details: r.Number);
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
-    return Results.Ok(new { request = r, approvalId });
+    return Results.Ok(new { request = r, approvalId, instanceId });
+});
+
+var workflows = app.MapGroup("/api/workflows").WithTags("Workflows").RequireAuthorization();
+workflows.MapGet("/definitions", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("workflow:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.WorkflowDefinitions.Where(d => d.TenantId == tenantId).OrderBy(d => d.Code).ToListAsync(ct));
+});
+workflows.MapPost("/definitions", async (AppDbContext db, HttpContext ctx, CreateWorkflowReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("workflow:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { error = "Code required." });
+    try { WorkflowDefinitionValidator.Validate(req.NodesJson); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var def = new WorkflowDefinition(Guid.NewGuid(), req.TenantId, req.Code.Trim(),
+        req.Name.Trim(), 1, req.NodesJson, true);
+    db.WorkflowDefinitions.Add(def);
+    DomainEvents.Record(db, req.TenantId, "WorkflowDefinitionCreated", "WorkflowDefinitionCreated",
+        nameof(WorkflowDefinition), def.Id.ToString(),
+        payload: new { tenantId = req.TenantId, definitionId = def.Id, code = def.Code }, details: def.Code);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Workflow code '{req.Code}' already exists in tenant." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/workflows/definitions/{def.Id}", def);
+});
+workflows.MapGet("/instances", async (AppDbContext db, HttpContext ctx, Guid tenantId, string? status, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("workflow:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var q = db.WorkflowInstances.Where(i => i.TenantId == tenantId);
+    if (Enum.TryParse<WorkflowInstanceStatus>(status, true, out var s)) q = q.Where(i => i.Status == s);
+    return Results.Ok(await q.OrderByDescending(i => i.UpdatedAt).ToListAsync(ct));
 });
 
 app.Run();
@@ -1411,4 +1467,5 @@ public sealed record RegisterEndpointReq(Guid TenantId, string EventType, string
 public sealed record CreateFormReq(Guid TenantId, string Code, string Name, string Category, string SchemaJson);
 public sealed record ValidateSubmissionReq(Guid TenantId, string DataJson);
 public sealed record CreateRequestReq(Guid TenantId, string Category, string Title, Guid SubmitterId, Guid? FormId, string? DataJson);
-public sealed record SubmitRequestReq(Guid TenantId, Guid? ReviewerId);
+public sealed record SubmitRequestReq(Guid TenantId, Guid? ReviewerId, string? WorkflowCode);
+public sealed record CreateWorkflowReq(Guid TenantId, string Code, string Name, string NodesJson);

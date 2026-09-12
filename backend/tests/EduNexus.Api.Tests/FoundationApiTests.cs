@@ -398,6 +398,88 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Workflow_FacultyAdminRequest_Chain_To_Completion()
+    {
+        // BBP killer workflow: dept review → dept approval → dean approval → task → done.
+        var perms = AllPerms.Concat(["request:create", "request:read", "workflow:manage", "workflow:read",
+            "approval:read", "approval:decide", "task:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "WF Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        async Task<Guid> MkPerson(string name)
+        {
+            var r = await client.PostAsJsonAsync("/api/people",
+                new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null });
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return IdOf(await r.Content.ReadFromJsonAsync<JsonElement>());
+        }
+        var employee = await MkPerson("Omar Employee");
+        var head = await MkPerson("Huda Head");
+        var dean = await MkPerson("Dean Dani");
+
+        var nodes = $$"""[{"id":"start","type":"start"},{"id":"dept","type":"approval","personId":"{{head}}","slaDays":3},{"id":"dean","type":"approval","personId":"{{dean}}","slaDays":2},{"id":"exec","type":"task","title":"Execute approved request","assigneeFrom":"submitter"},{"id":"end","type":"end"}]""";
+        var def = await client.PostAsJsonAsync("/api/workflows/definitions",
+            new { tenantId = tenant, code = "FAC-ADMIN", name = "Faculty Admin Request", nodesJson = nodes });
+        Assert.Equal(HttpStatusCode.Created, def.StatusCode);
+        var badDef = await client.PostAsJsonAsync("/api/workflows/definitions",
+            new { tenantId = tenant, code = "BAD", name = "Bad", nodesJson = """[{"id":"x","type":"teleport"}]""" });
+        Assert.Equal(HttpStatusCode.BadRequest, badDef.StatusCode);
+
+        var req = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "Administrative", title = "Lab access", submitterId = employee,
+            formId = (Guid?)null, dataJson = (string?)null,
+        });
+        Assert.Equal(HttpStatusCode.Created, req.StatusCode);
+        var reqId = IdOf(await req.Content.ReadFromJsonAsync<JsonElement>());
+
+        var submit = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit",
+            new { tenantId = tenant, reviewerId = (Guid?)null, workflowCode = "FAC-ADMIN" });
+        Assert.Equal(HttpStatusCode.OK, submit.StatusCode);
+        var submitted = await submit.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.NotEqual(Guid.Empty, submitted.GetProperty("instanceId").GetGuid());
+        var approval1 = submitted.GetProperty("approvalId").GetGuid();
+        Assert.NotEqual(Guid.Empty, approval1);
+
+        // step 1: dept head approves → step 2 pending for dean
+        var d1 = await client.PostAsJsonAsync($"/api/approvals/{approval1}/decide",
+            new { tenantId = tenant, decidedBy = head, approve = true, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.OK, d1.StatusCode);
+        var pending = await client.GetFromJsonAsync<JsonElement>($"/api/approvals?tenantId={tenant}&assigneeId={dean}&status=Pending");
+        Assert.Equal(1, pending.GetArrayLength());
+        var approval2 = pending[0].GetProperty("id").GetGuid();
+
+        // step 2: dean approves → task created → instance completed
+        var d2 = await client.PostAsJsonAsync($"/api/approvals/{approval2}/decide",
+            new { tenantId = tenant, decidedBy = dean, approve = true, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.OK, d2.StatusCode);
+        var tasks = await client.GetFromJsonAsync<JsonElement>($"/api/tasks?tenantId={tenant}&assigneeId={employee}");
+        Assert.True(tasks.GetArrayLength() >= 1);
+        var instances = await client.GetFromJsonAsync<JsonElement>($"/api/workflows/instances?tenantId={tenant}&status=Completed");
+        Assert.Equal(1, instances.GetArrayLength());
+
+        // rejection path closes the instance
+        var req2 = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "Administrative", title = "Rejected one", submitterId = employee,
+            formId = (Guid?)null, dataJson = (string?)null,
+        });
+        var req2Id = IdOf(await req2.Content.ReadFromJsonAsync<JsonElement>());
+        var sub2 = await client.PostAsJsonAsync($"/api/requests/{req2Id}/submit",
+            new { tenantId = tenant, reviewerId = (Guid?)null, workflowCode = "FAC-ADMIN" });
+        var rejApproval = (await sub2.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var rej = await client.PostAsJsonAsync($"/api/approvals/{rejApproval}/decide",
+            new { tenantId = tenant, decidedBy = head, approve = false, comment = "No" });
+        Assert.Equal(HttpStatusCode.OK, rej.StatusCode);
+        var rejected = await client.GetFromJsonAsync<JsonElement>($"/api/workflows/instances?tenantId={tenant}&status=Rejected");
+        Assert.Equal(1, rejected.GetArrayLength());
+    }
+
+    [Fact]
     public async Task PeopleImport_DryRun_Then_Import()
     {
         var bootstrap = factory.CreateClient();

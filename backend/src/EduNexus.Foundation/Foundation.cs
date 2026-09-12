@@ -263,3 +263,20 @@ public sealed record Form(
 public sealed record FormSubmission(
     Guid Id, Guid TenantId, Guid RequestId, Guid FormId, int FormVersion,
     string DataJson, Guid SubmittedBy, DateTimeOffset SubmittedAt);
+
+// ============================ R0.1 Track B — Workflow Engine ============================
+
+public enum WorkflowInstanceStatus { Running, Completed, Closed, Rejected }
+
+/// <summary>
+/// Versioned node graph. v1 linear nodes: start, approval {personId?, roleCode?, slaDays?},
+/// task {title, personId?|assigneeFrom}, notification {personId?, text}, end.
+/// v2 (parallel/conditional/timer) extends NodesJson without schema change.
+/// </summary>
+public sealed record WorkflowDefinition(
+    Guid Id, Guid TenantId, string Code, string Name, int Version,
+    string NodesJson, bool IsActive);
+
+public sealed record WorkflowInstance(
+    Guid Id, Guid TenantId, Guid DefinitionId, string EntityType, Guid EntityId,
+    string CurrentNodeId, WorkflowInstanceStatus Status, string ContextJson, DateTimeOffset UpdatedAt);

@@ -49,7 +49,12 @@ Enums serialize as strings (JsonStringEnumConverter).
 - `GET/POST /api/forms` (`form:read` / `form:manage`, unique code), `POST /api/forms/{id}/validate`
 - `GET /api/requests?tenantId=&status=&category=` (`request:read`)
 - `POST /api/requests` (`request:create`, validated submission snapshot, `REQ-yyyy-nnnnnn`)
-- `POST /api/requests/{id}/submit` (Draft-only → Submitted + optional approval/task, `RequestSubmitted`)
+- `POST /api/requests/{id}/submit` (Draft-only → Submitted + optional reviewer approval/task, `RequestSubmitted`)
+
+## R0.1 Track B implemented
+- `POST /api/workflows/definitions` (`workflow:manage`, validated node graph), `GET /api/workflows/definitions`, `GET /api/workflows/instances?status=`
+- `POST /api/requests/{id}/submit` with `workflowCode` → `WorkflowInstance` (Running) + chained approvals/tasks via `WorkflowRunner`
+- Approvals in a workflow advance the instance (`WorkflowAdvanced`) or mark it `Rejected` on any reject
 
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
 tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
