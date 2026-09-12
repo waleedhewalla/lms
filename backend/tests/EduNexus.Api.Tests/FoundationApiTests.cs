@@ -751,4 +751,84 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         }
         Assert.Fail("EventRelay did not dispatch RoleAssigned within 25s (is RabbitMQ up on :5673?)");
     }
+
+    [Fact]
+    public async Task Depth_RequestChanges_Delegate_TaskEnrichment()
+    {
+        var perms = AllPerms.Concat(["request:create", "request:read", "approval:read", "approval:decide",
+            "task:read", "task:update"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Depth Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        async Task<Guid> MkPerson(string name)
+        {
+            var r = await client.PostAsJsonAsync("/api/people",
+                new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null });
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return IdOf(await r.Content.ReadFromJsonAsync<JsonElement>());
+        }
+        var submitter = await MkPerson("Depth Submitter");
+        var reviewer = await MkPerson("Depth Reviewer");
+        var deputy = await MkPerson("Depth Deputy");
+
+        // request → submit with reviewer → request-changes returns it for revision
+        var req = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "IT", title = "VPN access", submitterId = submitter,
+            formId = (Guid?)null, dataJson = (string?)null,
+        });
+        var reqId = IdOf(await req.Content.ReadFromJsonAsync<JsonElement>());
+        var sub = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit",
+            new { tenantId = tenant, reviewerId = reviewer, workflowCode = (string?)null });
+        var approvalId = (await sub.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var rc = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/request-changes",
+            new { tenantId = tenant, decidedBy = reviewer, comment = "Add business justification" });
+        Assert.Equal(HttpStatusCode.OK, rc.StatusCode);
+        var reqs = await client.GetFromJsonAsync<JsonElement>($"/api/requests?tenantId={tenant}&status=ChangesRequested");
+        Assert.Equal(1, reqs.GetArrayLength());
+
+        // delegate moves approval + task to the deputy
+        var req2 = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "IT", title = "Monitor", submitterId = submitter,
+            formId = (Guid?)null, dataJson = (string?)null,
+        });
+        var req2Id = IdOf(await req2.Content.ReadFromJsonAsync<JsonElement>());
+        var sub2 = await client.PostAsJsonAsync($"/api/requests/{req2Id}/submit",
+            new { tenantId = tenant, reviewerId = reviewer, workflowCode = (string?)null });
+        var approval2 = (await sub2.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var del = await client.PostAsJsonAsync($"/api/approvals/{approval2}/delegate",
+            new { tenantId = tenant, delegatedBy = reviewer, delegateTo = deputy });
+        Assert.Equal(HttpStatusCode.OK, del.StatusCode);
+        Assert.Equal(deputy, (await del.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("assigneeId").GetGuid());
+        var depTasks = await client.GetFromJsonAsync<JsonElement>($"/api/tasks?tenantId={tenant}&assigneeId={deputy}");
+        Assert.True(depTasks.GetArrayLength() >= 1);
+        var taskId = depTasks[0].GetProperty("id").GetGuid();
+
+        // task enrichment: patch → comment → evidence → complete
+        var patch = await client.PatchAsJsonAsync($"/api/tasks/{taskId}",
+            new { tenantId = tenant, description = "Install and configure", priority = "High", progress = 40 });
+        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+        var badProgress = await client.PatchAsJsonAsync($"/api/tasks/{taskId}",
+            new { tenantId = tenant, progress = 150 });
+        Assert.Equal(HttpStatusCode.BadRequest, badProgress.StatusCode);
+        var comment = await client.PostAsJsonAsync($"/api/tasks/{taskId}/comments",
+            new { tenantId = tenant, authorId = deputy, text = "Started installation" });
+        Assert.Equal(HttpStatusCode.Created, comment.StatusCode);
+        var ev = await client.PostAsJsonAsync($"/api/tasks/{taskId}/evidence",
+            new { tenantId = tenant, uploadedBy = deputy, objectKey = "t/key.pdf", fileName = "key.pdf" });
+        Assert.Equal(HttpStatusCode.Created, ev.StatusCode);
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/tasks/{taskId}?tenantId={tenant}");
+        Assert.Equal("Install and configure", detail.GetProperty("description").GetString());
+        Assert.Equal(40, detail.GetProperty("progress").GetInt32());
+        var comments = await client.GetFromJsonAsync<JsonElement>($"/api/tasks/{taskId}/comments?tenantId={tenant}");
+        Assert.Equal(1, comments.GetArrayLength());
+        var evidences = await client.GetFromJsonAsync<JsonElement>($"/api/tasks/{taskId}/evidence?tenantId={tenant}");
+        Assert.Equal(1, evidences.GetArrayLength());
+        var done = await client.PostAsJsonAsync($"/api/tasks/{taskId}/complete", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+    }
 }

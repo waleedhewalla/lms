@@ -24,6 +24,10 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 - `POST /api/correspondence/{id}/submit` (Draft→Submitted + approval + task + event)
 - `GET /api/approvals?tenantId=&assigneeId=&status=` (`approval:read`)
 - `POST /api/approvals/{id}/decide` (`approval:decide`, assignee-only, 409 double-decide)
+- `POST /api/approvals/{id}/request-changes` (assignee-only → ChangesRequested, request returned for revision)
+- `POST /api/approvals/{id}/delegate` (current assignee only; moves approval + task, notifies)
+- `PATCH /api/tasks/{id}` (title/description/priority/progress/status), `GET /api/tasks/{id}` detail
+- `POST/GET /api/tasks/{id}/comments|/evidence` (discussion + object-store evidence links)
 - `GET /api/tasks?tenantId=&assigneeId=` (`task:read`) / `POST /api/tasks/{id}/complete` (`task:update`)
 - `GET /api/sla/breaches?tenantId=` (`approval:read`)
 - `GET /api/notifications?tenantId=&personId=` (`notification:read`; written by `NotificationConsumer`)
@@ -82,6 +86,9 @@ persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt`
 | ApprovalDecided | POST /api/approvals/{id}/decide | tenantId, approvalId, entityType, entityId, approved, decidedBy | notifications |
 | TaskCompleted | POST /api/tasks/{id}/complete | tenantId, taskId | analytics |
 | TaskBreached | SlaMonitor (1 min tick) | tenantId, taskId, title, assigneeId | notifications |
+| ApprovalChangesRequested / ApprovalDelegated | POST /api/approvals/{id}/request-changes\|/delegate | tenantId, approvalId, decidedBy | requester, new assignee |
+| TaskUpdated / TaskCommentAdded / TaskEvidenceAdded | PATCH/POST /api/tasks/{id}… | tenantId, taskId | analytics, inbox |
+| TaskEscalated | SlaMonitor (reminder >48h, escalation >72h) | tenantId, taskId, level, from/to | assignee, escalation owner |
 | CommitteeCreated / CommitteeMemberAdded | POST /api/committees[/{id}/members] | tenantId, committeeId, personId | audit projector |
 | MeetingScheduled / MeetingConcluded | POST /api/meetings[/{id}/conclude] | tenantId, meetingId, committeeId, title | notifications (members) |
 | DecisionPublished | POST /api/meetings/{id}/decisions | tenantId, decisionId, meetingId, committeeId, text | notifications (members) |

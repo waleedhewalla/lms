@@ -50,6 +50,25 @@ Actor: assignee with `approval:decide` (assignee match enforced, 403 otherwise).
 Behavior: Pending→Approved/Rejected + comment; linked correspondence status follows;
 linked task marked Done; `ApprovalDecided` event. Double-decide → 409.
 
+### FR-APR-002 — Request Changes & Delegate ✅ implemented (depth)
+`POST /api/approvals/{id}/request-changes` (assignee-only): Pending→ChangesRequested +
+comment; linked Request returns to ChangesRequested for revision (`ApprovalChangesRequested`).
+`POST /api/approvals/{id}/delegate`: reassigns approval + linked task to another person,
+notifies the new assignee (`ApprovalDelegated`); only the current assignee may delegate (403 otherwise).
+
+### FR-TSK-002 — Task Enrichment ✅ implemented (depth)
+`PATCH /api/tasks/{id}` (title/description/priority/progress 0–100/status) with `TaskUpdated`;
+`POST/GET .../comments` (author + text, `TaskCommentAdded`);
+`POST/GET .../evidence` (objectKey + filename, `TaskEvidenceAdded`); `GET /api/tasks/{id}` detail.
+Covered by `Depth_RequestChanges_Delegate_TaskEnrichment`.
+
+### FR-SLA-002 — Escalation Ladder ✅ implemented (depth, BBP M09)
+`SlaMonitor` (1-min tick, per tenant): overdue open tasks → Breached (`TaskBreached`);
+>48h overdue without reminder marker → reminder notification + `TaskEscalated{level:reminder}`;
+>72h without escalation marker → reassigned to escalation owner (holder of an `escalation:*`
+permission, else earliest active employee) + `TaskEscalated{level:escalation}`.
+Idempotent via `TaskEscalated` audit markers (`reminder:`/`escalation:` details).
+
 ### FR-TSK-001 — Complete Task ✅ / FR-SLA-001 — Breach Detection ✅
 Tasks auto-created on submit; `SlaMonitor` marks overdue Open/InProgress tasks Breached
 + `TaskBreached` event; breaches queryable at `GET /api/sla/breaches`.

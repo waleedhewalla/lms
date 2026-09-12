@@ -52,6 +52,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<WorkflowInstance> WorkflowInstances => Set<WorkflowInstance>();
     public DbSet<Communication> Communications => Set<Communication>();
     public DbSet<CommunicationRecipient> CommunicationRecipients => Set<CommunicationRecipient>();
+    public DbSet<TaskEvidence> TaskEvidences => Set<TaskEvidence>();
+    public DbSet<TaskComment> TaskComments => Set<TaskComment>();
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -155,6 +157,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => new { x.TenantId, x.AssigneeId });
             e.Property(x => x.Title).HasMaxLength(300).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.Priority).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<TaskEvidence>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.TaskId });
+        });
+        b.Entity<TaskComment>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.TaskId });
+            e.Property(x => x.Text).HasMaxLength(2000).IsRequired();
         });
         b.Entity<Notification>(e =>
         {

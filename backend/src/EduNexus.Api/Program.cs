@@ -514,6 +514,54 @@ approvals.MapPost("/{id:guid}/decide", async (AppDbContext db, HttpContext ctx, 
     await scope.CommitAsync(ct);
     return Results.Ok(decided);
 });
+approvals.MapPost("/{id:guid}/request-changes", async (AppDbContext db, HttpContext ctx, Guid id, RequestChangesReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("approval:decide")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (a is null) return Results.NotFound(new { error = "Approval not found." });
+    if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval already {a.Status}." });
+    if (a.AssigneeId != req.DecidedBy) return Results.Forbid();
+    var changed = a with { Status = ApprovalStatus.ChangesRequested, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = req.DecidedBy, Comment = req.Comment };
+    db.Entry(a).CurrentValues.SetValues(changed);
+    // Return request to submitter for revision if linked entity is a Request
+    if (a.EntityType == nameof(Request))
+    {
+        var r = await db.Requests.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == a.EntityId, ct);
+        if (r is not null) db.Entry(r).CurrentValues.SetValues(r with { Status = RequestStatus.ChangesRequested });
+    }
+    DomainEvents.Record(db, req.TenantId, "ApprovalChangesRequested", "ApprovalChangesRequested",
+        nameof(Approval), a.Id.ToString(),
+        payload: new { tenantId = req.TenantId, approvalId = a.Id, decidedBy = req.DecidedBy }, details: req.Comment ?? "changes requested");
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(changed);
+});
+approvals.MapPost("/{id:guid}/delegate", async (AppDbContext db, HttpContext ctx, Guid id, DelegateApprovalReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("approval:decide")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (a is null) return Results.NotFound(new { error = "Approval not found." });
+    if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval already {a.Status}." });
+    if (a.AssigneeId != req.DelegatedBy) return Results.Forbid();
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.DelegateTo, ct))
+        return Results.NotFound(new { error = "Delegate not found in tenant." });
+    var delegated = a with { AssigneeId = req.DelegateTo };
+    db.Entry(a).CurrentValues.SetValues(delegated);
+    var task = await db.WorkTasks.FirstOrDefaultAsync(t => t.TenantId == req.TenantId && t.ApprovalId == a.Id, ct);
+    if (task is not null) db.Entry(task).CurrentValues.SetValues(task with { AssigneeId = req.DelegateTo });
+    db.Notifications.Add(new Notification(Guid.NewGuid(), req.TenantId, req.DelegateTo,
+        "Approval delegated to you", $"Approval {a.Id} delegated", NotificationChannel.InApp, NotificationStatus.Sent, DateTimeOffset.UtcNow));
+    DomainEvents.Record(db, req.TenantId, "ApprovalDelegated", "ApprovalDelegated",
+        nameof(Approval), a.Id.ToString(),
+        payload: new { tenantId = req.TenantId, approvalId = a.Id, from = req.DelegatedBy, to = req.DelegateTo }, details: $"{req.DelegatedBy}->{req.DelegateTo}");
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(delegated);
+});
 
 var tasks = app.MapGroup("/api/tasks").WithTags("Tasks").RequireAuthorization();
 tasks.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid? assigneeId, CancellationToken ct) =>
@@ -541,6 +589,86 @@ tasks.MapPost("/{id:guid}/complete", async (AppDbContext db, HttpContext ctx, Gu
     await db.SaveChangesAsync(ct);
     await scope.CommitAsync(ct);
     return Results.Ok(t);
+});
+tasks.MapPatch("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, UpdateTaskReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (req.Progress is < 0 or > 100) return Results.BadRequest(new { error = "Progress must be 0-100." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (t is null) return Results.NotFound(new { error = "Task not found." });
+    if (t.Status == WorkTaskStatus.Done) return Results.Conflict(new { error = "Task already done." });
+    var updated = t with
+    {
+        Title = string.IsNullOrWhiteSpace(req.Title) ? t.Title : req.Title.Trim(),
+        Description = req.Description ?? t.Description,
+        Priority = req.Priority is not null && Enum.TryParse<WorkTaskPriority>(req.Priority, true, out var p) ? p : t.Priority,
+        Progress = req.Progress ?? t.Progress,
+        Status = req.Status is not null && Enum.TryParse<WorkTaskStatus>(req.Status, true, out var s) ? s : t.Status,
+    };
+    db.Entry(t).CurrentValues.SetValues(updated);
+    DomainEvents.Record(db, req.TenantId, "TaskUpdated", "TaskUpdated",
+        nameof(WorkTask), t.Id.ToString(),
+        payload: new { tenantId = req.TenantId, taskId = t.Id, progress = updated.Progress }, details: updated.Title);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(updated);
+});
+tasks.MapGet("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("task:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
+    return t is null ? Results.NotFound(new { error = "Task not found." }) : Results.Ok(t);
+});
+tasks.MapPost("/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, Guid id, AddTaskEvidenceReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (t is null) return Results.NotFound(new { error = "Task not found." });
+    var ev = new TaskEvidence(Guid.NewGuid(), req.TenantId, id, req.UploadedBy, req.ObjectKey, req.FileName, DateTimeOffset.UtcNow);
+    db.TaskEvidences.Add(ev);
+    DomainEvents.Record(db, req.TenantId, "TaskEvidenceAdded", "TaskEvidenceAdded",
+        nameof(TaskEvidence), ev.Id.ToString(),
+        payload: new { tenantId = req.TenantId, taskId = id, objectKey = req.ObjectKey }, details: req.FileName);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/tasks/{id}/evidence/{ev.Id}", ev);
+});
+tasks.MapGet("/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("task:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.TaskEvidences.Where(e => e.TenantId == tenantId && e.TaskId == id).OrderBy(e => e.At).ToListAsync(ct));
+});
+tasks.MapPost("/{id:guid}/comments", async (AppDbContext db, HttpContext ctx, Guid id, AddTaskCommentReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (string.IsNullOrWhiteSpace(req.Text)) return Results.BadRequest(new { error = "Text required." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (t is null) return Results.NotFound(new { error = "Task not found." });
+    var c = new TaskComment(Guid.NewGuid(), req.TenantId, id, req.AuthorId, req.Text.Trim(), DateTimeOffset.UtcNow);
+    db.TaskComments.Add(c);
+    DomainEvents.Record(db, req.TenantId, "TaskCommentAdded", "TaskCommentAdded",
+        nameof(TaskComment), c.Id.ToString(),
+        payload: new { tenantId = req.TenantId, taskId = id }, details: req.Text[..Math.Min(80, req.Text.Length)]);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/tasks/{id}/comments/{c.Id}", c);
+});
+tasks.MapGet("/{id:guid}/comments", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("task:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.TaskComments.Where(c => c.TenantId == tenantId && c.TaskId == id).OrderBy(c => c.At).ToListAsync(ct));
 });
 
 var sla = app.MapGroup("/api/sla").WithTags("SLA").RequireAuthorization();
@@ -1587,7 +1715,12 @@ public sealed record RecipientReq(string? PersonId, string DisplayName, bool IsE
 public sealed record CreateCorrespondenceReq(Guid TenantId, string Type, string Subject, string Content, Guid AuthorId, string? Priority, bool IsConfidential, RecipientReq[]? Recipients);
 public sealed record SubmitCorrespondenceReq(Guid TenantId, Guid ReviewerId);
 public sealed record DecideApprovalReq(Guid TenantId, Guid DecidedBy, bool Approve, string? Comment);
+public sealed record RequestChangesReq(Guid TenantId, Guid DecidedBy, string? Comment);
+public sealed record DelegateApprovalReq(Guid TenantId, Guid DelegatedBy, Guid DelegateTo);
 public sealed record CompleteTaskReq(Guid TenantId);
+public sealed record UpdateTaskReq(Guid TenantId, string? Title, string? Description, string? Priority, int? Progress, string? Status);
+public sealed record AddTaskEvidenceReq(Guid TenantId, Guid UploadedBy, string ObjectKey, string FileName);
+public sealed record AddTaskCommentReq(Guid TenantId, Guid AuthorId, string Text);
 public sealed record CreateCommitteeReq(Guid TenantId, string Code, string Name);
 public sealed record AddMemberReq(Guid TenantId, Guid PersonId, string? Role);
 public sealed record AgendaReq(string Title, string? Description);

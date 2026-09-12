@@ -123,7 +123,7 @@ public sealed record Correspondence(
 
 public sealed record Correspondent(Guid Id, Guid TenantId, Guid CorrespondenceId, Guid? PersonId, string DisplayName, bool IsExternal);
 
-public enum ApprovalStatus { Pending, Approved, Rejected, Cancelled }
+public enum ApprovalStatus { Pending, Approved, Rejected, Cancelled, ChangesRequested }
 public enum ApprovalPriority { Normal, Accelerated }
 
 public sealed record Approval(
@@ -132,10 +132,15 @@ public sealed record Approval(
     DateTimeOffset DueAt, DateTimeOffset? DecidedAt, Guid? DecidedBy, string? Comment);
 
 public enum WorkTaskStatus { Open, InProgress, Done, Breached }
+public enum WorkTaskPriority { Low, Normal, High, Urgent }
 
 public sealed record WorkTask(
     Guid Id, Guid TenantId, string Title, Guid AssigneeId, Guid? ApprovalId,
-    WorkTaskStatus Status, DateTimeOffset DueAt, DateTimeOffset CreatedAt);
+    WorkTaskStatus Status, DateTimeOffset DueAt, DateTimeOffset CreatedAt,
+    string Description = "", WorkTaskPriority Priority = WorkTaskPriority.Normal, int Progress = 0);
+
+public sealed record TaskEvidence(Guid Id, Guid TenantId, Guid TaskId, Guid UploadedBy, string ObjectKey, string FileName, DateTimeOffset At);
+public sealed record TaskComment(Guid Id, Guid TenantId, Guid TaskId, Guid AuthorId, string Text, DateTimeOffset At);
 
 public enum NotificationChannel { InApp, Email, Sms }
 public enum NotificationStatus { Queued, Sent, Failed }
