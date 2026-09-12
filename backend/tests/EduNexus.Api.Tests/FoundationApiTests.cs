@@ -337,6 +337,67 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Requests_PurchaseFlow_FormValidate_Submit_Approval()
+    {
+        // BBP killer-flow slice: dynamic purchase form → validated submission → numbered request → approval.
+        var perms = AllPerms.Concat(["form:manage", "form:read", "request:create", "request:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Req Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        var requester = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Omar Buyer", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var head = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Huda Head", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var schema = """[{"key":"purpose","label":"Purpose","type":"Text","required":true},{"key":"amount","label":"Amount","type":"Currency","required":true},{"key":"urgent","label":"Urgent","type":"Checkbox","required":false},{"key":"justification","label":"Justification","type":"LongText","required":false,"visibleWhen":{"field":"urgent","equals":"True"}}]""";
+        var form = await client.PostAsJsonAsync("/api/forms",
+            new { tenantId = tenant, code = "PURCHASE", name = "Purchase Request", category = "Procurement", schemaJson = schema });
+        Assert.Equal(HttpStatusCode.Created, form.StatusCode);
+        var formId = IdOf(await form.Content.ReadFromJsonAsync<JsonElement>());
+        var dupForm = await client.PostAsJsonAsync("/api/forms",
+            new { tenantId = tenant, code = "PURCHASE", name = "Dup", category = "Procurement", schemaJson = "[]" });
+        Assert.Equal(HttpStatusCode.Conflict, dupForm.StatusCode);
+        var badSchema = await client.PostAsJsonAsync("/api/forms",
+            new { tenantId = tenant, code = "BAD", name = "Bad", category = "Procurement", schemaJson = "{oops" });
+        Assert.Equal(HttpStatusCode.BadRequest, badSchema.StatusCode);
+
+        // invalid submission rejected (missing required amount)
+        var bad = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "Procurement", title = "Laptops", submitterId = requester,
+            formId, dataJson = """{"purpose":"Lab laptops"}""",
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+
+        // valid submission → numbered draft request
+        var good = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "Procurement", title = "Laptops", submitterId = requester,
+            formId, dataJson = """{"purpose":"Lab laptops","amount":15000,"urgent":false}""",
+        });
+        Assert.Equal(HttpStatusCode.Created, good.StatusCode);
+        var req = await good.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.StartsWith("REQ-", req.GetProperty("number").GetString());
+        Assert.Equal("Draft", req.GetProperty("status").GetString());
+        var reqId = req.GetProperty("id").GetGuid();
+
+        // submit with reviewer → approval + task
+        var submit = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit",
+            new { tenantId = tenant, reviewerId = head });
+        Assert.Equal(HttpStatusCode.OK, submit.StatusCode);
+        var approvalId = (await submit.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        Assert.NotEqual(Guid.Empty, approvalId);
+        var resubmit = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit",
+            new { tenantId = tenant, reviewerId = head });
+        Assert.Equal(HttpStatusCode.Conflict, resubmit.StatusCode);
+        var list = await client.GetFromJsonAsync<JsonElement>($"/api/requests?tenantId={tenant}&status=Submitted");
+        Assert.Equal(1, list.GetArrayLength());
+    }
+
+    [Fact]
     public async Task PeopleImport_DryRun_Then_Import()
     {
         var bootstrap = factory.CreateClient();

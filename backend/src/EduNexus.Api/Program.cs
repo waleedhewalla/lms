@@ -1250,6 +1250,124 @@ integrations.MapGet("/deliveries", async (AppDbContext db, HttpContext ctx, Guid
     return Results.Ok(await q.OrderByDescending(d => d.At).Take(100).ToListAsync(ct));
 });
 
+// ============================ R0.1 Track A — Requests & Dynamic Forms ============================
+
+var forms = app.MapGroup("/api/forms").WithTags("Forms").RequireAuthorization();
+forms.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("form:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    return Results.Ok(await db.Forms.Where(f => f.TenantId == tenantId && f.IsActive).OrderBy(f => f.Code).ToListAsync(ct));
+});
+forms.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateFormReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("form:manage")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<RequestCategory>(req.Category, true, out var cat))
+        return Results.BadRequest(new { error = "Unknown category." });
+    if (string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { error = "Code required." });
+    var schemaErrors = FormValidation.Validate(req.SchemaJson, "{}");
+    if (schemaErrors.Any(e => e is "invalid form schema" or "form schema must be an array"))
+        return Results.BadRequest(new { error = "SchemaJson must be a JSON array of fields." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var form = new Form(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Name.Trim(), cat, req.SchemaJson, 1, true);
+    db.Forms.Add(form);
+    DomainEvents.Record(db, req.TenantId, "FormCreated", "FormCreated",
+        nameof(Form), form.Id.ToString(),
+        payload: new { tenantId = req.TenantId, formId = form.Id, code = form.Code }, details: form.Code);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException ex) when (IsUniqueConflict(ex))
+    {
+        return Results.Conflict(new { error = $"Form code '{req.Code}' already exists in tenant." });
+    }
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/forms/{form.Id}", form);
+});
+forms.MapPost("/{id:guid}/validate", async (AppDbContext db, HttpContext ctx, Guid id, ValidateSubmissionReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("form:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var form = await db.Forms.FirstOrDefaultAsync(f => f.TenantId == req.TenantId && f.Id == id, ct);
+    if (form is null) return Results.NotFound(new { error = "Form not found." });
+    return Results.Ok(new { valid = true, errors = FormValidation.Validate(form.SchemaJson, req.DataJson) });
+});
+
+var requests = app.MapGroup("/api/requests").WithTags("Requests").RequireAuthorization();
+requests.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, string? status, string? category, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("request:read")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+    var q = db.Requests.Where(r => r.TenantId == tenantId);
+    if (Enum.TryParse<RequestStatus>(status, true, out var s)) q = q.Where(r => r.Status == s);
+    if (Enum.TryParse<RequestCategory>(category, true, out var c)) q = q.Where(r => r.Category == c);
+    return Results.Ok(await q.OrderByDescending(r => r.CreatedAt).ToListAsync(ct));
+});
+requests.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateRequestReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("request:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    if (!Enum.TryParse<RequestCategory>(req.Category, true, out var cat))
+        return Results.BadRequest(new { error = "Unknown category." });
+    if (string.IsNullOrWhiteSpace(req.Title)) return Results.BadRequest(new { error = "Title required." });
+    if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.SubmitterId, ct))
+        return Results.NotFound(new { error = "Submitter not found in tenant." });
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    Form? form = null;
+    if (req.FormId.HasValue)
+    {
+        form = await db.Forms.FirstOrDefaultAsync(f => f.TenantId == req.TenantId && f.Id == req.FormId.Value, ct);
+        if (form is null) return Results.NotFound(new { error = "Form not found." });
+        var errs = FormValidation.Validate(form.SchemaJson, req.DataJson ?? "{}");
+        if (errs.Count > 0) return Results.BadRequest(new { error = "Submission invalid.", errors = errs });
+    }
+    var seq = await Sequences.NextAsync(db, req.TenantId, "request", ct);
+    var r = new Request(Guid.NewGuid(), req.TenantId, $"REQ-{DateTimeOffset.UtcNow:yyyy}-{seq:D6}",
+        cat, req.Title.Trim(), form?.Id, req.SubmitterId, RequestStatus.Draft, DateTimeOffset.UtcNow, null);
+    db.Requests.Add(r);
+    if (form is not null)
+        db.FormSubmissions.Add(new FormSubmission(Guid.NewGuid(), req.TenantId, r.Id, form.Id,
+            form.Version, req.DataJson ?? "{}", req.SubmitterId, DateTimeOffset.UtcNow));
+    DomainEvents.Record(db, req.TenantId, "RequestCreated", "RequestCreated",
+        nameof(Request), r.Id.ToString(),
+        payload: new { tenantId = req.TenantId, requestId = r.Id, number = r.Number, category = cat.ToString() }, details: r.Number);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Created($"/api/requests/{r.Id}", r);
+});
+requests.MapPost("/{id:guid}/submit", async (AppDbContext db, HttpContext ctx, Guid id, SubmitRequestReq req, CancellationToken ct) =>
+{
+    if (!ctx.User.HasPermission("request:create")) return Results.Forbid();
+    if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+    await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+    var r = await db.Requests.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+    if (r is null) return Results.NotFound(new { error = "Request not found." });
+    if (r.Status != RequestStatus.Draft)
+        return Results.Conflict(new { error = $"Only Draft requests can be submitted (now {r.Status})." });
+    db.Entry(r).CurrentValues.SetValues(r with { Status = RequestStatus.Submitted, SubmittedAt = DateTimeOffset.UtcNow });
+    Guid? approvalId = null;
+    if (req.ReviewerId.HasValue)
+    {
+        if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.ReviewerId.Value, ct))
+            return Results.NotFound(new { error = "Reviewer not found in tenant." });
+        var approval = new Approval(Guid.NewGuid(), req.TenantId, nameof(Request), r.Id,
+            req.ReviewerId.Value, ApprovalStatus.Pending, ApprovalPriority.Normal,
+            DateTimeOffset.UtcNow.AddDays(5), null, null, null);
+        db.Approvals.Add(approval);
+        db.WorkTasks.Add(new WorkTask(Guid.NewGuid(), req.TenantId, $"Review {r.Number}: {r.Title}",
+            req.ReviewerId.Value, approval.Id, WorkTaskStatus.Open, approval.DueAt, DateTimeOffset.UtcNow));
+        approvalId = approval.Id;
+    }
+    DomainEvents.Record(db, req.TenantId, "RequestSubmitted", "RequestSubmitted",
+        nameof(Request), r.Id.ToString(),
+        payload: new { tenantId = req.TenantId, requestId = r.Id, number = r.Number, approvalId }, details: r.Number);
+    await db.SaveChangesAsync(ct);
+    await scope.CommitAsync(ct);
+    return Results.Ok(new { request = r, approvalId });
+});
+
 app.Run();
 
 public sealed record CreateTenantReq(string Slug, string Name);
@@ -1290,3 +1408,7 @@ public sealed record CreateKpiReq(Guid TenantId, Guid ObjectiveId, string Name, 
 public sealed record KpiReadingReq(Guid TenantId, double Current);
 public sealed record AskReq(Guid TenantId, string Question, string? Capability);
 public sealed record RegisterEndpointReq(Guid TenantId, string EventType, string TargetUrl, string? Secret);
+public sealed record CreateFormReq(Guid TenantId, string Code, string Name, string Category, string SchemaJson);
+public sealed record ValidateSubmissionReq(Guid TenantId, string DataJson);
+public sealed record CreateRequestReq(Guid TenantId, string Category, string Title, Guid SubmitterId, Guid? FormId, string? DataJson);
+public sealed record SubmitRequestReq(Guid TenantId, Guid? ReviewerId);

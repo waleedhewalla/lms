@@ -45,6 +45,12 @@ Enums serialize as strings (JsonStringEnumConverter).
 - `POST /api/quality/standards|criteria|evidence|findings|corrective-actions` (`quality:manage`)
 - `POST /api/strategy/plans|objectives|kpis`, `POST /api/strategy/kpis/{id}/reading` (`strategy:manage`)
 
+## R0.1 Track A implemented
+- `GET/POST /api/forms` (`form:read` / `form:manage`, unique code), `POST /api/forms/{id}/validate`
+- `GET /api/requests?tenantId=&status=&category=` (`request:read`)
+- `POST /api/requests` (`request:create`, validated submission snapshot, `REQ-yyyy-nnnnnn`)
+- `POST /api/requests/{id}/submit` (Draft-only → Submitted + optional approval/task, `RequestSubmitted`)
+
 Auth: OIDC (set `Auth:Authority`) or dev HS256. Every mutation runs in a tenant-scoped
 tx (`TenantScope`, LOCAL GUC) and writes `AuditEvent` + `OutboxEvent` atomically
 (`DomainEvents.Record`). OpenAPI at `/openapi/v1.json` (dev).

@@ -233,3 +233,33 @@ public sealed record IntegrationEndpoint(
 public sealed record IntegrationDelivery(
     Guid Id, Guid TenantId, Guid EndpointId, string EventType, string Payload,
     IntegrationDeliveryStatus Status, int Attempts, string? LastError, DateTimeOffset At);
+
+// ============================ R0.1 Track A — Requests & Dynamic Forms ============================
+
+public enum RequestCategory
+{
+    Academic, Administrative, HR, Finance, Procurement,
+    IT, Facilities, StudentAffairs, Research, Quality, Other,
+}
+
+public enum RequestStatus { Draft, Submitted, InReview, ChangesRequested, Approved, Rejected, Closed }
+
+public sealed record Request(
+    Guid Id, Guid TenantId, string Number, RequestCategory Category, string Title,
+    Guid? FormId, Guid SubmitterId, RequestStatus Status,
+    DateTimeOffset CreatedAt, DateTimeOffset? SubmittedAt);
+
+public enum FormFieldType
+{
+    Text, LongText, Number, Currency, Date, DateTime, Dropdown, MultiSelect,
+    Radio, Checkbox, User, Department, Organization, Document, Attachment, Signature, Table,
+}
+
+/// <summary>Dynamic form definition. SchemaJson: [{key,label,type,required,options[],validation{},visibleWhen{}}].</summary>
+public sealed record Form(
+    Guid Id, Guid TenantId, string Code, string Name, RequestCategory Category,
+    string SchemaJson, int Version, bool IsActive);
+
+public sealed record FormSubmission(
+    Guid Id, Guid TenantId, Guid RequestId, Guid FormId, int FormVersion,
+    string DataJson, Guid SubmittedBy, DateTimeOffset SubmittedAt);

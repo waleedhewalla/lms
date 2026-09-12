@@ -109,6 +109,19 @@ Covered by `Ai_AskEcho_LogsInteraction` (passage grounding + log assertions).
 Register per-(tenant, event) HTTPS endpoints (URL validated, secret auto-generated);
 `IntegrationDispatcher` POSTs HMAC-signed payloads; `IntegrationDelivery` log records
 Delivered/Failed. Covered by `Integrations_Webhook_FailedDelivery_Logged`.
+
+## Release 0.1 Tracks (BBP)
+
+### FR-REQ-001 — Dynamic Forms ✅ implemented (Track A)
+`POST /api/forms` (unique code per tenant, schema must be a JSON field array);
+`POST /api/forms/{id}/validate` dry-run. 17 field types; required/options/conditional
+(`visibleWhen`) enforced server-side by `FormValidation`.
+
+### FR-REQ-002 — Requests ✅ implemented (Track A)
+`POST /api/requests` validates DataJson against the linked form → numbered draft
+`REQ-yyyy-nnnnnn` (atomic per-tenant sequence) + submission snapshot;
+`POST /api/requests/{id}/submit` (Draft-only, optional reviewer → approval + task,
+`RequestSubmitted` event). Covered by `Requests_PurchaseFlow_FormValidate_Submit_Approval`.
 Actor: authorized employee. Behavior: validate tenant → create Employee/Student → `PersonCreated` audit. PG migration pending (see roadmap).
 
 Full FRS target 150–250 pages; add FR-COR-001 etc. in Release 2.
