@@ -471,6 +471,7 @@ public static class GovernanceDepthEndpoints
             var a = await db.DecisionActions.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (a is null) return Results.NotFound(new { error = "Action not found." });
             if (await ActingPersonAsync(db, ctx, req.TenantId, ct) is not { } me || me != a.AssigneeId) return Results.Forbid();
+            if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey.Trim()) is { } badKey) return badKey;
             var ev = new DecisionActionEvidence(Guid.NewGuid(), req.TenantId, id, req.ObjectKey.Trim(), req.FileName.Trim(), req.Note?.Trim(), me, DateTimeOffset.UtcNow);
             db.DecisionActionEvidences.Add(ev);
             DomainEvents.Record(db, req.TenantId, "ActionEvidenceAdded", "ActionEvidenceAdded", nameof(DecisionAction), id.ToString(), actorId: me, details: ev.FileName);

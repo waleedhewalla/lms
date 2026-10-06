@@ -1,3 +1,4 @@
+using EduNexus.Api.Integrations;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -257,10 +258,12 @@ public static class IntelligenceEndpoints
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.EventType) || string.IsNullOrWhiteSpace(req.TargetUrl))
                 return Results.BadRequest(new { error = "EventType and TargetUrl required." });
-            if (!Uri.TryCreate(req.TargetUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
-                return Results.BadRequest(new { error = "TargetUrl must be a valid HTTP/HTTPS URL." });
+            var allowPrivate = ctx.RequestServices.GetRequiredService<IConfiguration>().GetValue<bool>(OutboundUrlGuard.AllowPrivateKey);
+            var urlError = OutboundUrlGuard.Validate(req.TargetUrl.Trim());
+            if (urlError is not null && !(allowPrivate && urlError.Contains("loopback")))
+                return Results.BadRequest(new { error = urlError });
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            var ep = new IntegrationEndpoint(Guid.NewGuid(), req.TenantId, req.EventType.Trim(), req.TargetUrl.Trim(), req.Secret ?? "sec-default", true);
+            var ep = new IntegrationEndpoint(Guid.NewGuid(), req.TenantId, req.EventType.Trim(), req.TargetUrl.Trim(), string.IsNullOrWhiteSpace(req.Secret) ? Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)) : req.Secret, true);
             db.IntegrationEndpoints.Add(ep);
             DomainEvents.Record(db, req.TenantId, "IntegrationEndpointRegistered", "IntegrationEndpointRegistered",
                 nameof(IntegrationEndpoint), ep.Id.ToString(), details: ep.TargetUrl);
@@ -753,6 +756,7 @@ public static class IntelligenceEndpoints
         {
             if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+            if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey) is { } badKey) return badKey;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var ev = new TaskEvidence(Guid.NewGuid(), req.TenantId, id, req.UploadedBy, req.ObjectKey, req.FileName, DateTimeOffset.UtcNow);
             db.TaskEvidences.Add(ev);

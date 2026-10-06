@@ -14,6 +14,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { ...authHeaders(), ...(init?.headers ?? {}) },
   });
   if (res.status === 401) throw new Error(`${init?.method ?? "GET"} ${path} → 401 (not signed in or session expired — sign in again)`);
+  if (res.status === 403) throw new Error(`${init?.method ?? "GET"} ${path} → 403 (no permission for this, or your account is not linked to a person in the directory)`);
   if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}`);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

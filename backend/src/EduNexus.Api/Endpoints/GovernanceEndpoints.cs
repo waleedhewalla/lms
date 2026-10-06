@@ -268,6 +268,8 @@ public static class GovernanceEndpoints
             var agendaItem = await db.AgendaItems
                 .FirstOrDefaultAsync(a => a.TenantId == req.TenantId && a.MeetingId == id && a.Id == req.AgendaItemId, ct);
             if (agendaItem is null) return Results.NotFound(new { error = "Agenda item not found for meeting." });
+            if (await db.MeetingVotes.AnyAsync(v => v.TenantId == req.TenantId && v.AgendaItemId == req.AgendaItemId && v.PersonId == req.PersonId, ct))
+                return Results.Conflict(new { error = "This person has already voted on this agenda item." });
             var vote = new MeetingVote(Guid.NewGuid(), req.TenantId, id, req.AgendaItemId,
                 req.PersonId, choice, DateTimeOffset.UtcNow, req.Remarks?.Trim());
             db.MeetingVotes.Add(vote);

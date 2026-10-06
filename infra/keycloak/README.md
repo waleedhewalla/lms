@@ -17,6 +17,48 @@ This runbook documents the configuration patterns for integrating EduNexus OS V2
 
 ---
 
+## ⚡ Turnkey Keycloak realm (recommended)
+
+`realm-edunexus.json` is a complete, importable realm. It contains:
+
+- **Client `edunexus-web`:**
+  - a public client using Authorization Code + PKCE S256, with password grants disabled;
+  - redirect, logout and web origins taken from `EDUNEXUS_WEB_URL`;
+  - mappers for the audience (`EDUNEXUS_API_AUDIENCE`, default `edunexus-api`), `tenant_id`, `person_id` and `permission`.
+- **Permission groups:** users get their permissions by joining one of these.
+
+  | Group | Permissions |
+  |---|---|
+  | `edunexus-platform-admins` | Everything, including `tenant:create` |
+  | `edunexus-tenant-admins` | Everything inside the tenant |
+  | `edunexus-leaders` | Verify, analytics, policy authoring, audit |
+  | `edunexus-secretaries` | Meetings, minutes, decisions, actions |
+  | `edunexus-staff` | Requests, tasks, approvals, documents, governance read |
+  | `edunexus-readonly` | Every `:read` permission |
+
+- **Declared user profile:** `tenant_id` and `person_id` hold GUIDs that only admins can edit.
+- **Security settings:**
+  - brute-force lockout;
+  - password policy: at least 12 characters, not the username or email, last 5 passwords can't be reused;
+  - 15-minute access tokens, with refresh-token rotation.
+
+**Import:**
+- Compose: `docker compose -f infra/docker-compose.yml --profile idp up -d keycloak`. The realm is mounted and imported on first start.
+- Elsewhere: `kc.sh start --import-realm` with the file in `/opt/keycloak/data/import/`.
+
+**Onboard a user:**
+1. Create the user and set `tenant_id`, plus `person_id` if the email isn't unique in the directory.
+2. Add the user to one group.
+
+**Verify:** `infra/keycloak/verify-realm.sh <keycloak-url> <admin> <password>` asserts the token claims. CI runs it on every PR.
+
+**Proven 2026-10-06:**
+- A browser signed in on Keycloak 26's own login page using PKCE S256.
+- The web app received the token, and the API in OIDC mode accepted it: `/api/auth/me` returned the 31 staff permissions.
+- The browser reported zero CSP violations.
+
+`setup.ps1` is kept as the earlier imperative proof. Prefer the realm file.
+
 ## 🛠️ Customer Integration Patterns
 
 ### Pattern 1: Azure AD / Entra ID Integration
