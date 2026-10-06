@@ -1,6 +1,6 @@
-export const API_BASE =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_BASE) ||
-  "http://127.0.0.1:5238";
+import { apiBase } from "./config";
+
+export { apiBase };
 
 export function authHeaders(): Record<string, string> {
   if (typeof window === "undefined") return { "Content-Type": "application/json" };
@@ -9,10 +9,11 @@ export function authHeaders(): Record<string, string> {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     ...init,
     headers: { ...authHeaders(), ...(init?.headers ?? {}) },
   });
+  if (res.status === 401) throw new Error(`${init?.method ?? "GET"} ${path} → 401 (not signed in or session expired — sign in again)`);
   if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}`);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

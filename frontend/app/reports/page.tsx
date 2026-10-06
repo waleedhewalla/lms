@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { API_BASE, api, authHeaders } from "../../lib/api";
+import { api, apiBase, authHeaders } from "../../lib/api";
 import { Card, Kpi, Page, Table, attempt, useL, useTenant } from "../../components/Ui";
 
 type Governance = {
@@ -36,7 +36,7 @@ export default function ReportsPage() {
     setRows(await api<Row[]>(`/api/reports/${c}?tenantId=${tenantId}`));
   });
   const exportCsv = () => attempt(setErr, async () => {
-    const res = await fetch(`${API_BASE}/api/reports/${code}/export?tenantId=${tenantId}`, { headers: authHeaders() });
+    const res = await fetch(`${apiBase()}/api/reports/${code}/export?tenantId=${tenantId}`, { headers: authHeaders() });
     if (!res.ok) throw new Error(`export → ${res.status}`);
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");

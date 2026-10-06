@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { API_BASE, api, authHeaders } from "../../lib/api";
+import { api, apiBase, authHeaders } from "../../lib/api";
 import { Card, Field, Page, Table, attempt, fmtDate, useL, useTenant } from "../../components/Ui";
 
 type Item = { id: string; title: string; kind: string; startsAt: string; endsAt: string; location: string | null; sourceType: string };
@@ -29,7 +29,7 @@ export default function CalendarPage() {
     await load();
   });
   const downloadIcs = () => attempt(setErr, async () => {
-    const res = await fetch(`${API_BASE}/api/calendar/export.ics?tenantId=${tenantId}`, { headers: authHeaders() });
+    const res = await fetch(`${apiBase()}/api/calendar/export.ics?tenantId=${tenantId}`, { headers: authHeaders() });
     if (!res.ok) throw new Error(`export.ics → ${res.status}`);
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");

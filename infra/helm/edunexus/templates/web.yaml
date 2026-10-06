@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edunexus-web
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels: { app: edunexus-web }
+  template:
+    metadata:
+      labels: { app: edunexus-web }
+    spec:
+      securityContext: { runAsNonRoot: true }
+      containers:
+        - name: web
+          image: "{{ .Values.registry }}{{ .Values.web.image }}"
+          ports: [{ containerPort: {{ .Values.web.port }} }]
+          env:
+            - { name: EDUNEXUS_API_BASE, value: {{ .Values.web.apiPublicUrl | quote }} }
+            - { name: EDUNEXUS_OIDC_AUTHORITY, value: {{ .Values.api.auth.authority | quote }} }
+            - { name: EDUNEXUS_OIDC_CLIENT_ID, value: {{ .Values.web.oidcClientId | quote }} }
+          livenessProbe:
+            httpGet: { path: /runtime-config.js, port: {{ .Values.web.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /runtime-config.js, port: {{ .Values.web.port }} }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edunexus-web
+  namespace: {{ .Values.namespace }}
+spec:
+  selector: { app: edunexus-web }
+  ports: [{ port: 80, targetPort: {{ .Values.web.port }} }]
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: edunexus
+  namespace: {{ .Values.namespace }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.ingress.webHost | quote }}, {{ .Values.ingress.apiHost | quote }}]
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.ingress.webHost | quote }}
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: edunexus-web, port: { number: 80 } } } }
+    - host: {{ .Values.ingress.apiHost | quote }}
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: edunexus-api, port: { number: 80 } } } }
+{{- end }}

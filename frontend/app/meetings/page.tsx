@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
+import { useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 import { Chatter } from "../../components/Chatter";
 
@@ -50,7 +51,7 @@ type VoteTally = {
 
 export default function MeetingsPage() {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useTenant();
   const [err, setErr] = useState("");
   const [committees, setCommittees] = useState<{ id: string; code: string; name: string }[]>([]);
   const [meetings, setMeetings] = useState<{ id: string; title: string; status: string; committeeId: string; startsAt: string }[]>([]);

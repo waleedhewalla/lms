@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
+import { useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 
 type Person = { id: string; fullName: string; email?: string; type: string };
@@ -9,7 +10,7 @@ type Delegation = { id: string; fromPersonId: string; toPersonId: string; scope:
 
 export default function DirectoryPage() {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useTenant();
   const [q, setQ] = useState("");
   const [people, setPeople] = useState<Person[]>([]);
   const [err, setErr] = useState("");

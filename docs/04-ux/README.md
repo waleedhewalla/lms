@@ -15,7 +15,7 @@ show an accessible error banner (`role=alert`) and empty states, and hide action
 
 | Route | Screen | Purpose |
 |---|---|---|
-| `/my-work` | UX-WRK-001 My Work | Approvals waiting on me, my tasks, notifications, inbox counts |
+| `/my-work` | UX-INB-001 My Work | Approvals waiting on me, my tasks, notifications, inbox counts |
 | `/requests` | UX-REQ-001 Requests | Catalog → dynamic form → submit/cancel, request timeline |
 | `/tasks` | UX-TSK-001 Tasks | Create, assign, complete, verify tasks; overdue view |
 | `/approvals` | UX-APR-006 Approval Workspace | Decide approvals (SoD enforced server-side) |

@@ -1,8 +1,10 @@
+{{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.namespace }}
 ---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,19 +18,30 @@ spec:
     metadata:
       labels: { app: edunexus-api }
     spec:
+      securityContext: { runAsNonRoot: true }
       containers:
         - name: api
           image: "{{ .Values.registry }}{{ .Values.api.image }}"
           ports: [{ containerPort: {{ .Values.api.port }} }]
           env:
             - { name: ASPNETCORE_ENVIRONMENT, value: {{ .Values.api.env.ASPNETCORE_ENVIRONMENT | quote }} }
-            - { name: EDUNEXUS_CONNECTION, value: {{ .Values.api.env.EDUNEXUS_CONNECTION | quote }} }
+            - name: EDUNEXUS_CONNECTION
+              valueFrom: { secretKeyRef: { name: {{ .Values.api.secretName }}, key: connection } }
             - { name: Auth__Authority, value: {{ .Values.api.auth.authority | quote }} }
             - { name: Auth__Audience, value: {{ .Values.api.auth.audience | quote }} }
             - { name: Auth__EnableDevToken, value: "false" }
             - { name: RabbitMQ__Host, value: {{ .Values.api.rabbitmq.host | quote }} }
             - { name: RabbitMQ__Port, value: {{ .Values.api.rabbitmq.port | quote }} }
             - { name: Storage__Endpoint, value: {{ .Values.api.storage.endpoint | quote }} }
+            - { name: Storage__AccessKey, value: minio }
+            - name: Storage__SecretKey
+              valueFrom: { secretKeyRef: { name: edunexus-minio, key: root-password } }
+            - { name: Cors__AllowedOrigins, value: {{ .Values.web.publicUrl | quote }} }
+            - { name: AI__Provider, value: {{ .Values.api.ai.provider | quote }} }
+            - { name: AI__BaseUrl, value: {{ .Values.api.ai.baseUrl | quote }} }
+            - { name: AI__Model, value: {{ .Values.api.ai.model | quote }} }
+            - name: AI__ApiKey
+              valueFrom: { secretKeyRef: { name: {{ .Values.api.secretName }}, key: ai-api-key, optional: true } }
             - { name: AI__OpenSearchUrl, value: {{ .Values.api.ai.openSearchUrl | quote }} }
           livenessProbe:
             httpGet: { path: /health, port: {{ .Values.api.port }} }
@@ -38,6 +51,7 @@ spec:
             httpGet: { path: /health, port: {{ .Values.api.port }} }
             initialDelaySeconds: 10
             periodSeconds: 10
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
           resources:
             requests: { cpu: 250m, memory: 512Mi }
             limits: { cpu: "2", memory: 2Gi }

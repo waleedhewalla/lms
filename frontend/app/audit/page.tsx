@@ -2,13 +2,14 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
+import { useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 
 type Audit = { id: string; action: string; entityType: string; entityId: string; at: string; details?: string };
 
 export default function AuditPage() {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useTenant();
   const [rows, setRows] = useState<Audit[]>([]);
   const [err, setErr] = useState("");
 

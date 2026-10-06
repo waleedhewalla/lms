@@ -1,13 +1,16 @@
 # On-prem reference values (ADR-001). Override secrets per site — never commit real ones.
 namespace: edunexus
+# Secrets are created in the namespace before install (DEPLOYMENT.md), so the namespace normally exists already.
+createNamespace: false
 registry: ""  # private registry prefix for air-gap, e.g. "registry.local:5000/"
 api:
-  image: edunexus-api:1.1.0
+  image: edunexus-api:1.3.0
   replicas: 2
   port: 8080
+  # Pre-created Secret (see DEPLOYMENT.md): keys `connection` (Npgsql connection string) and optional `ai-api-key`.
+  secretName: edunexus-api
   env:
     ASPNETCORE_ENVIRONMENT: Production
-    EDUNEXUS_CONNECTION: Host=edunexus-postgres;Port=5432;Database=edunexus;Username=edunexus;Password=CHANGEME
   auth:
     authority: https://idp.local/realms/edunexus  # customer IdP (OIDC); empty disables OIDC
     audience: edunexus-api
@@ -18,6 +21,22 @@ api:
     endpoint: edunexus-minio:9000
   ai:
     openSearchUrl: http://edunexus-opensearch:9200
+    provider: Echo          # Echo = built-in extractive drafts; OpenAI = any OpenAI-compatible endpoint
+    baseUrl: ""            # e.g. an on-prem inference server for air-gapped sites
+    model: ""
+web:
+  image: edunexus-web:1.3.0
+  replicas: 2
+  port: 8000
+  publicUrl: https://edunexus.example.edu      # browser origin of the web app (also the API CORS origin)
+  apiPublicUrl: https://api.edunexus.example.edu
+  oidcClientId: edunexus-web                   # public client, Authorization Code + PKCE
+ingress:
+  enabled: false
+  className: nginx
+  tlsSecretName: edunexus-tls
+  webHost: edunexus.example.edu
+  apiHost: api.edunexus.example.edu
 postgres:
   image: postgres:16
   storage: 20Gi

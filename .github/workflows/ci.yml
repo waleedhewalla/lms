@@ -82,3 +82,33 @@ jobs:
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
       - run: npm run build
+
+  deploy-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Helm lint + render (defaults and ingress on)
+        run: |
+          helm lint infra/helm/edunexus
+          helm template edunexus infra/helm/edunexus > /tmp/default.yaml
+          helm template edunexus infra/helm/edunexus --set ingress.enabled=true > /tmp/ingress.yaml
+          grep -q 'name: edunexus-web' /tmp/default.yaml
+          grep -q 'kind: Ingress' /tmp/ingress.yaml
+          ! grep -q 'CHANGEME' /tmp/default.yaml
+      - name: Compose config (infra + app tier)
+        run: docker compose -f infra/docker-compose.yml -f infra/docker-compose.app.yml config -q
+      - name: Build API image
+        run: docker build -t edunexus-api:ci backend
+      - name: Build web image
+        run: docker build -t edunexus-web:ci frontend
+      - name: Smoke web image (runtime config is read from the environment)
+        run: |
+          docker run -d --name web -p 8000:8000 -e EDUNEXUS_API_BASE=https://api.example.test -e EDUNEXUS_OIDC_AUTHORITY=https://idp.example.test/realms/x edunexus-web:ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/runtime-config.js && break; sleep 1; done
+          curl -sf http://127.0.0.1:8000/runtime-config.js | grep -q 'https://api.example.test'
+          curl -sf http://127.0.0.1:8000/my-work | grep -q 'runtime-config.js'
+          docker exec web id -u | grep -qx 1001
+      - name: Smoke API image (Production refuses dev auth)
+        run: |
+          docker run --rm -e ASPNETCORE_ENVIRONMENT=Production edunexus-api:ci > /tmp/api.log 2>&1 && exit 1 || true
+          grep -q 'Production requires Auth:Authority' /tmp/api.log

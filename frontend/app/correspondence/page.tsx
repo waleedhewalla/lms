@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
+import { useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 import { Chatter } from "../../components/Chatter";
 
@@ -43,7 +44,7 @@ const INITIAL_DATA: Corr[] = [
 
 export default function CorrespondencePage() {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useTenant();
   const [activeTab, setActiveTab] = useState<"inbox" | "drafts" | "review" | "sent">("inbox");
   const [items, setItems] = useState<Corr[]>(INITIAL_DATA);
   const [selectedId, setSelectedId] = useState<string | null>(null);
