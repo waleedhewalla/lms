@@ -150,6 +150,7 @@ app.MapCorrespondenceEndpoints();
 app.MapGovernanceEndpoints();
 app.MapDocumentEndpoints();
 app.MapIntelligenceEndpoints();
+app.MapReadEndpoints();
 
 if (args.Contains("--migrate-only"))
 {
