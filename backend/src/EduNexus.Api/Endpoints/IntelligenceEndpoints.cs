@@ -199,7 +199,7 @@ public static class IntelligenceEndpoints
             var totalDocs = await db.Documents.CountAsync(d => d.TenantId == tenantId, ct);
             var totalCorrespondences = await db.Correspondences.CountAsync(c => c.TenantId == tenantId, ct);
             var pendingApprovals = await db.Approvals.CountAsync(a => a.TenantId == tenantId && a.Status == ApprovalStatus.Pending, ct);
-            var openTasks = await db.WorkTasks.CountAsync(t => t.TenantId == tenantId && t.Status != WorkTaskStatus.Done, ct);
+            var openTasks = await db.WorkTasks.CountAsync(t => t.TenantId == tenantId && t.Status != WorkTaskStatus.Done && t.Status != WorkTaskStatus.Verified, ct);
             return Results.Ok(new { totalPeople, activePeople, totalDocs, totalCorrespondences, pendingApprovals, openTasks });
         }).RequireAuthorization().WithTags("Analytics");
 
@@ -710,6 +710,7 @@ public static class IntelligenceEndpoints
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (t is null) return Results.NotFound(new { error = "Task not found." });
+            if (t.Status == WorkTaskStatus.Verified) return Results.Conflict(new { error = "Task is already verified." });
             var updated = t with { Status = WorkTaskStatus.Done, Progress = 100 };
             db.Entry(t).CurrentValues.SetValues(updated);
             await db.SaveChangesAsync(ct);
@@ -858,7 +859,7 @@ public static class IntelligenceEndpoints
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var now = DateTimeOffset.UtcNow;
             var approvalBreaches = await db.Approvals.Where(a => a.TenantId == tenantId && a.Status == ApprovalStatus.Pending && a.DueAt < now).ToListAsync(ct);
-            var taskBreaches = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.Status != WorkTaskStatus.Done && t.DueAt < now).ToListAsync(ct);
+            var taskBreaches = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.Status != WorkTaskStatus.Done && t.Status != WorkTaskStatus.Verified && t.DueAt < now).ToListAsync(ct);
             return Results.Ok(new { approvals = approvalBreaches, tasks = taskBreaches });
         });
 
@@ -867,7 +868,7 @@ public static class IntelligenceEndpoints
             if (!ctx.User.HasPermission("inbox:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
-            var tasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done).ToListAsync(ct);
+            var tasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done && t.Status != WorkTaskStatus.Verified).ToListAsync(ct);
             var approvals = await db.Approvals.Where(a => a.TenantId == tenantId && a.AssigneeId == personId && a.Status == ApprovalStatus.Pending).ToListAsync(ct);
             var notifications = await db.Notifications.Where(n => n.TenantId == tenantId && n.PersonId == personId).Take(50).ToListAsync(ct);
             int total = tasks.Count + approvals.Count + notifications.Count;
@@ -880,7 +881,7 @@ public static class IntelligenceEndpoints
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var myApprovals = await db.Approvals.Where(a => a.TenantId == tenantId && a.AssigneeId == personId && a.Status == ApprovalStatus.Pending).ToListAsync(ct);
-            var myTasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done).ToListAsync(ct);
+            var myTasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done && t.Status != WorkTaskStatus.Verified).ToListAsync(ct);
             var myActivities = await db.ScheduledActivities.Where(a => a.TenantId == tenantId && a.AssigneeId == personId && !a.IsCompleted).ToListAsync(ct);
             var counts = new { openApprovals = myApprovals.Count, openTasks = myTasks.Count, pendingActivities = myActivities.Count };
             return Results.Ok(new { counts, approvals = myApprovals, tasks = myTasks, activities = myActivities });
