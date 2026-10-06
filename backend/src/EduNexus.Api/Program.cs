@@ -71,6 +71,10 @@ builder.Services.AddSingleton(sp =>
     var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("ai");
     return new TenantSearchIndex(http, o);
 });
+builder.Services.AddSingleton(sp => new TextGenerator(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("ai"),
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiOptions>>().Value,
+    sp.GetRequiredService<ILogger<TextGenerator>>()));
 builder.Services.AddHostedService<IntegrationDispatcher>();
 
 // --- Observability: traces (OTLP, collector optional) + Prometheus metrics on /metrics ---
@@ -154,6 +158,7 @@ app.MapReadEndpoints();
 app.MapWorkEndpoints();
 app.MapReportEndpoints();
 app.MapGovernanceDepthEndpoints();
+app.MapAiGovernanceEndpoints();
 
 if (args.Contains("--migrate-only"))
 {

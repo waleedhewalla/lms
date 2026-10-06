@@ -412,6 +412,67 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task WaveE_Ai_Meeting_Assistants_Suggest_And_Memory()
+    {
+        var perms = AllPerms.Concat(["committee:create", "committee:read", "meeting:create", "meeting:read", "meeting:update",
+            "decision:create", "decision:read", "ai:ask", "search:read", "policy:create", "policy:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Wave E Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        var chair = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Chair Mona", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var committee = IdOf(await (await client.PostAsJsonAsync("/api/committees", new { tenantId = tenant, code = Uid("C"), name = "Research Council" }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        await client.PostAsJsonAsync($"/api/committees/{committee}/members", new { tenantId = tenant, personId = chair, role = "Chair" });
+        var meeting = IdOf(await (await client.PostAsJsonAsync("/api/meetings", new { tenantId = tenant, committeeId = committee, title = "Research Council #4",
+            startsAt = DateTimeOffset.UtcNow.AddDays(1), agenda = new[] { new { title = "Lab funding", description = "FY27 allocation" } } }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        await ClientAs(tenant, perms, chair).PostAsJsonAsync($"/api/meetings/{meeting}/check-in", new { tenantId = tenant });
+        var decision = IdOf(await (await client.PostAsJsonAsync($"/api/meetings/{meeting}/decisions", new { tenantId = tenant, text = "Fund the AI lab" }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+
+        var summary = await (await client.PostAsJsonAsync($"/api/ai/meetings/{meeting}/summary", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(summary.GetProperty("requiresHumanReview").GetBoolean());
+        Assert.Equal("edunexus-extractive-v1", summary.GetProperty("model").GetString());
+        Assert.Contains("Fund the AI lab", summary.GetProperty("summary").GetString());
+        Assert.Contains("Research Council #4", summary.GetProperty("summary").GetString());
+
+        var draft = await (await client.PostAsJsonAsync($"/api/ai/meetings/{meeting}/draft-minutes", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        var draftText = draft.GetProperty("draft").GetString()!;
+        Assert.Contains("Decision: Fund the AI lab", draftText);
+        Assert.Contains("Chair Mona: Present", draftText);
+
+        // the secretary saves an edited draft; the assistant proposes decisions from it (EN + AR lines)
+        var minutes = IdOf(await (await ClientAs(tenant, perms, chair).PostAsJsonAsync($"/api/meetings/{meeting}/minutes",
+            new { tenantId = tenant, content = draftText + "\nResolved: Review lab KPIs quarterly\nقرار: اعتماد خطة البحث", submit = false }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        var extracted = await (await client.PostAsJsonAsync($"/api/ai/minutes/{minutes}/extract-decisions", new { tenantId = tenant }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var proposed = extracted.GetProperty("proposedDecisions").EnumerateArray().Select(x => x.GetString()).ToList();
+        Assert.Contains("Fund the AI lab", proposed);
+        Assert.Contains("Review lab KPIs quarterly", proposed);
+        Assert.Contains("اعتماد خطة البحث", proposed);
+
+        // search suggest + institutional memory for the decision
+        await client.PostAsJsonAsync("/api/policies", new { tenantId = tenant, code = Uid("POL"), title = "Research ethics", content = "..." });
+        var suggest = await client.GetFromJsonAsync<JsonElement>($"/api/search/suggest?tenantId={tenant}&q=research");
+        var types = suggest.EnumerateArray().Select(x => x.GetProperty("type").GetString()).ToList();
+        Assert.Contains("Policy", types);
+        Assert.Contains("Meeting", types);
+        var memory = await client.GetFromJsonAsync<JsonElement>($"/api/search/memory/Decision/{decision}?tenantId={tenant}");
+        var rel = memory.GetProperty("related").EnumerateArray().Select(x => x.GetProperty("relation").GetString()).ToList();
+        Assert.Contains("decided-in", rel);
+        Assert.Contains("by-committee", rel);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/search/memory/Nope/{decision}?tenantId={tenant}")).StatusCode);
+
+        var noAi = ClientAs(tenant, AllPerms.Concat(["meeting:read"]).ToArray(), chair);
+        Assert.Equal(HttpStatusCode.Forbidden, (await noAi.PostAsJsonAsync($"/api/ai/meetings/{meeting}/summary", new { tenantId = tenant })).StatusCode);
+    }
+
+    [Fact]
     public async Task Tenant_DuplicateSlug_409()
     {
         var client = factory.CreateClient();
