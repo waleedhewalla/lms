@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
+import { useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 
 type DocumentActionRule = {
@@ -33,7 +34,7 @@ type RetentionReviewItem = {
 
 export default function IntelligencePage() {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useTenant();
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [results, setResults] = useState<{ correspondence: { title: string }[]; documents: { title: string }[]; people: { title: string }[]; decisions: { title: string }[]; policies: { title: string }[] } | null>(null);

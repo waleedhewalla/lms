@@ -17,4 +17,5 @@ spec:
           command: ["dotnet", "EduNexus.Api.dll", "--migrate-only"]
           env:
             - { name: ASPNETCORE_ENVIRONMENT, value: {{ .Values.api.env.ASPNETCORE_ENVIRONMENT | quote }} }
-            - { name: EDUNEXUS_CONNECTION, value: {{ .Values.api.env.EDUNEXUS_CONNECTION | quote }} }
+            - name: EDUNEXUS_CONNECTION
+              valueFrom: { secretKeyRef: { name: {{ .Values.api.secretName }}, key: connection } }

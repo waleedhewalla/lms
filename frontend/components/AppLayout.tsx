@@ -1,10 +1,14 @@
 "use client";
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { config } from "../lib/config";
 import { useTranslation } from "./TranslationProvider";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { locale, setLocale, t } = useTranslation();
   const L = (en: string, ar: string) => (locale === "ar" ? ar : en);
+  const [grafanaUrl, setGrafanaUrl] = useState("");
+  useEffect(() => setGrafanaUrl(config().grafanaUrl), []);
 
   return (
     <div className="app-container">
@@ -42,9 +46,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <button className="btn btn-secondary" onClick={() => setLocale(locale === "ar" ? "en" : "ar")} style={{ padding: '0.4rem 1rem', fontSize: '0.875rem' }}>
               {locale === "ar" ? "English (LTR)" : "عربي (RTL)"}
             </button>
-            <a href="http://localhost:3021" target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.875rem' }}>
-              {t("btn.grafana")}
-            </a>
+            {grafanaUrl && (
+              <a href={grafanaUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.875rem' }}>
+                {t("btn.grafana")}
+              </a>)}
           </div>
         </header>
         

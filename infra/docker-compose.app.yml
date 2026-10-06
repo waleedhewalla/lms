@@ -1,0 +1,62 @@
+# Application tier on top of infra/docker-compose.yml (single-host / pilot deployment).
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.app.yml --env-file infra/.env up -d --build
+#
+# Defaults run a demo stack (Development auth: dev-token minting from the web UI).
+# For a real site set the variables in infra/.env (see infra/.env.example): ASPNETCORE_ENVIRONMENT=Production,
+# an OIDC authority, CORS origin, and real secrets. The API refuses to boot in Production on dev auth.
+x-api-env: &api-env
+  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+  EDUNEXUS_CONNECTION: Host=postgres;Port=5432;Database=edunexus;Username=edunexus;Password=${POSTGRES_PASSWORD:-edunexus}
+  Auth__Authority: ${OIDC_AUTHORITY:-}
+  Auth__Audience: ${OIDC_AUDIENCE:-edunexus-api}
+  Auth__EnableDevToken: ${ENABLE_DEV_TOKEN:-true}
+  Auth__DevSigningKey: ${DEV_SIGNING_KEY:-dev-only-key-change-me-min-32-chars-long!!}
+  Cors__AllowedOrigins: ${WEB_ORIGIN:-http://localhost:8000}
+  RabbitMQ__Host: rabbitmq
+  RabbitMQ__Port: "5672"
+  RabbitMQ__Username: ${RABBITMQ_USER:-guest}
+  RabbitMQ__Password: ${RABBITMQ_PASSWORD:-guest}
+  Storage__Endpoint: minio:9000
+  Storage__AccessKey: ${MINIO_ROOT_USER:-minio}
+  Storage__SecretKey: ${MINIO_ROOT_PASSWORD:-minio12345}
+  AI__OpenSearchUrl: http://opensearch:9200
+  AI__Provider: ${AI_PROVIDER:-Echo}
+  AI__BaseUrl: ${AI_BASE_URL:-}
+  AI__ApiKey: ${AI_API_KEY:-}
+  AI__Model: ${AI_MODEL:-}
+
+services:
+  migrate:
+    build: ../backend
+    image: edunexus-api:${EDUNEXUS_VERSION:-local}
+    command: ["dotnet", "EduNexus.Api.dll", "--migrate-only"]
+    environment: *api-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: edunexus-api:${EDUNEXUS_VERSION:-local}
+    container_name: edunexus-api
+    restart: unless-stopped
+    environment: *api-env
+    ports: ["5238:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_started }
+      minio: { condition: service_started }
+      opensearch: { condition: service_started }
+
+  web:
+    build: ../frontend
+    image: edunexus-web:${EDUNEXUS_VERSION:-local}
+    container_name: edunexus-web
+    restart: unless-stopped
+    environment:
+      EDUNEXUS_API_BASE: ${API_PUBLIC_URL:-http://localhost:5238}
+      EDUNEXUS_OIDC_AUTHORITY: ${OIDC_AUTHORITY:-}
+      EDUNEXUS_OIDC_CLIENT_ID: ${OIDC_WEB_CLIENT_ID:-edunexus-web}
+      EDUNEXUS_GRAFANA_URL: ${GRAFANA_URL:-}
+    ports: ["8000:8000"]
+    depends_on: [api]

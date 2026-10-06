@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: edunexus
       POSTGRES_USER: edunexus
-      POSTGRES_PASSWORD: edunexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edunexus}
     ports: ["5433:5432"]
     volumes: [pgdata:/var/lib/postgresql/data, walarchive:/walarchive, pgbackup:/backups]
     healthcheck:
@@ -25,6 +25,9 @@ services:
     image: rabbitmq:3-management
     container_name: edunexus-rabbitmq
     restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     ports: ["5673:5672", "15673:15672"]
   minio:
     image: minio/minio
@@ -32,8 +35,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio12345
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio12345}
     ports: ["9002:9000", "9003:9001"]
     volumes: [miniodata:/data]
   opensearch:

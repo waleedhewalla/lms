@@ -1,5 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiBase, oidcEnabled } from "../lib/config";
+import { claims, signIn, signOut } from "../lib/oidc";
 import { useTranslation } from "./TranslationProvider";
 
 export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; setTenantId: (v: string) => void }) {
@@ -7,11 +9,18 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
   const [token, setToken] = useState("");
   const [status, setStatus] = useState("");
   const [personId, setPersonId] = useState("");
+  const [sso, setSso] = useState(false);
+  const [user, setUser] = useState<string | null>(null);
+  useEffect(() => {
+    setSso(oidcEnabled());
+    const c = claims();
+    setUser(c ? String(c.name ?? c.preferred_username ?? c.email ?? c.sub ?? "") : null);
+  }, []);
   
   async function mint() {
     setStatus("…");
     try {
-      const res = await fetch("http://127.0.0.1:5238/api/auth/dev-token", {
+      const res = await fetch(`${apiBase()}/api/auth/dev-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -31,6 +40,19 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
     }
   }
   
+  if (sso) {
+    // Production: identity comes from the institution's IdP; the tenant comes from the token's tenant_id claim.
+    return (
+      <div className="glass-card" style={{ marginBottom: '2rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '1.2rem' }}>🔑</span>
+        {user
+          ? <><span>{user}</span><button className="btn btn-secondary" onClick={() => signOut()}>Sign out / تسجيل الخروج</button></>
+          : <button className="btn" onClick={() => signIn(window.location.pathname).catch((e) => setStatus(String(e)))}>Sign in / تسجيل الدخول</button>}
+        {status && <span role="alert" className="badge" style={{ margin: 0 }}>{status}</span>}
+      </div>
+    );
+  }
+
   return (
     <div className="glass-card" style={{ marginBottom: '2rem' }}>
       <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

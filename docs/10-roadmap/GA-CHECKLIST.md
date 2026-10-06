@@ -1,4 +1,4 @@
-# GA release gates — v1.1.0 working slice (R1–R5 foundations)
+# GA release gates — v1.3.0 (delivery plan Waves A–G complete)
 
 Scope honesty: this tag certifies a **working vertical slice of every release**,
 not the full V2 document page-counts nor customer-specific production hardening.
@@ -20,14 +20,17 @@ Each gate below is PASS, PARTIAL, or OPEN (v1.0.0 → v1.1.0 deltas noted).
 | 10 | Observability | PASS (v1.1.0) | Grafana datasource+dashboard provisioned, 3 Prometheus alerts evaluating; OTLP traces need collector |
 | 11 | Auth | PASS-local (v1.1.0) | Keycloak OIDC proven end-to-end (role→permission mapping, tenant claim, `RequireHttpsMetadata` non-prod exception); customer IdP = config task per `infra/keycloak/README.md` |
 | 12 | Frontend | PASS (v1.3.0) | 18 routes build on Next 15.5; every module has a bilingual (EN/AR, RTL) screen: My Work, Requests, Tasks, Approvals, Correspondence, Governance, Decisions, Policies, Calendar, Reports, Intelligence, Settings; Playwright smoke screenshots against seeded API |
-| 13 | K8s/air-gap prod install | PASS (v1.1.0) | Helm chart lint+render verified, app images build + smoke-proven, AIRGAP.md runbook; EF migration Job included (`migrate-job.yaml`) |
+| 13 | K8s/air-gap prod install | PASS (v1.3.0) | Helm chart has API, web, optional ingress, secrets-only credentials and non-root pods. CI lints and renders it on every PR. Both images build and are smoke-tested in CI. Covered by AIRGAP.md and DEPLOYMENT.md; the EF migration hook runs before API pods start. |
+| 17 | Production auth in the web app | PASS (v1.3.0) | OIDC Authorization Code + PKCE sign-in and sign-out, tenant taken from the token, browser-verified against a mock IdP. The API refuses Production on dev auth (smoke-tested in CI). |
+| 18 | Hardening | PASS (v1.3.0) | CORS restricted to configured origins (integration-tested); forwarded headers; security headers; non-root containers; runtime config (no secrets in images); `.env` ignored by git. |
+| 19 | Release pipeline | PASS (v1.3.0) | Tagging `vX.Y.Z` publishes both images to GHCR and creates the GitHub release with RELEASE-NOTES.md. |
 | 14 | Pen-test | IN-PROGRESS (Sprint 1) | Scope doc prepared; human pen-test scheduled for Sprint 1 window (SLA: Crit 24h, High 1w) |
 | 15 | Data migration tooling | PASS-slice (v1.1.0) | CSV directory import (dry-run + import) tested; SIS/ERP sync pending |
 | 16 | Docs at target depth | PASS-slice (v1.2.0) | Full architectural ADRs, runbooks (AIRGAP, IdP, SIS/ERP sync), traceability matrix, and API DTOs documented |
 
 ## Ship decision
-Cleared for: demo, pilot onboarding design, IdP integration, R2–R5 frontend build.
+Cleared for: demo, pilot deployment (Compose or Helm) with the institution's IdP, staff onboarding.
 NOT cleared for: production student data, public exposure, compliance sign-off.
 
-Next (post-GA): 10–16 in roadmap order; k6 write-mix re-run; customer IdP (closes 11);
-Helm + air-gap bundle (closes 13).
+Open before production student data: gate 14 (pen-test), k6 write-mix re-run at the target
+scale, and customer IdP configuration on site (gate 11). Deployment steps: `DEPLOYMENT.md`.

@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Hosting;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -1987,6 +1988,27 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         // 6. Clean up rule
         var delRuleRes = await client.DeleteAsync($"/api/documents/action-rules/{ruleId}?tenantId={tenant}");
         Assert.Equal(HttpStatusCode.NoContent, delRuleRes.StatusCode);
+    }
+    [Fact]
+    public async Task Cors_Allows_Only_Configured_Origins()
+    {
+        using var configured = factory.WithWebHostBuilder(b => b.UseSetting("Cors:AllowedOrigins", "https://edunexus.example.edu"));
+        var client = configured.CreateClient();
+
+        async Task<HttpResponseMessage> Preflight(string origin)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Options, "/api/auth/me");
+            req.Headers.Add("Origin", origin);
+            req.Headers.Add("Access-Control-Request-Method", "GET");
+            req.Headers.Add("Access-Control-Request-Headers", "authorization");
+            return await client.SendAsync(req);
+        }
+
+        var allowed = await Preflight("https://edunexus.example.edu");
+        Assert.Equal("https://edunexus.example.edu", allowed.Headers.GetValues("Access-Control-Allow-Origin").Single());
+
+        var denied = await Preflight("https://evil.example.com");
+        Assert.False(denied.Headers.Contains("Access-Control-Allow-Origin"));
     }
 }
 

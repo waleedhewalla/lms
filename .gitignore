@@ -47,3 +47,7 @@ data/
 Thumbs.db
 .idea/
 *.swp
+
+# Deployment secrets
+infra/.env
+.env

@@ -2,5 +2,5 @@ apiVersion: v2
 name: edunexus
 description: EduNexus OS V2 — on-prem reference install (ADR-001)
 type: application
-version: 1.1.0
-appVersion: "1.1.0"
+version: 1.3.0
+appVersion: "1.3.0"

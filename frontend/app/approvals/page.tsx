@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
+import { useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 import { Chatter } from "../../components/Chatter";
 
@@ -9,7 +10,7 @@ type Approval = { id: string; entityType: string; status: string; dueAt: string;
 
 export default function ApprovalsPage() {
   const { t } = useTranslation();
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useTenant();
   const [items, setItems] = useState<Approval[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [err, setErr] = useState("");
