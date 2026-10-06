@@ -172,3 +172,14 @@ Delegation needs a deputy in the same tenant other than yourself. Dev tokens acc
   (in-app and Emergency always delivered; disabled/min-priority/quiet hours apply to other channels)
 - SLA policies: `GET /api/sla/policies` (`approval:read`), `POST /api/sla/policies` (`sla:manage`, upsert per entity type);
   request reviews take their due date from the `Request` policy
+
+## Wave E — AI governance assistants & institutional memory (BBP §12.3, §13)
+All assistant output is grounded in the tenant's own records, returned with `requiresHumanReview: true`,
+and logged as an `AiInteraction` (requested by the token's person). Nothing is written to the record automatically.
+- `POST /api/ai/meetings/{id}/summary` (`ai:ask` + `meeting:read`) — executive summary
+- `POST /api/ai/meetings/{id}/draft-minutes` (`ai:ask` + `meeting:update`) — attendance, agenda, votes, `Decision:` lines, actions
+- `POST /api/ai/minutes/{id}/extract-decisions` (`ai:ask` + `meeting:read`) — proposals from `Decision:`/`Resolved:`/`قرار:` lines
+- Provider: `AI:Provider=Echo` (default, extractive, offline) or `OpenAI` (any OpenAI-compatible `/chat/completions` via
+  `AI:BaseUrl/ApiKey/Model`, temperature 0.2, record-only system prompt); any provider failure falls back to the extractive draft.
+- `GET /api/search/suggest?q=` (`search:read`; requests, correspondence (confidential gated), policies, decisions, meetings, documents)
+- `GET /api/search/memory/{entityType}/{id}` (`search:read`; related records + audit history for Decision, Meeting, Committee, Policy, Request)
