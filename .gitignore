@@ -35,6 +35,10 @@ secrets/
 # Docker volumes / local data
 data/
 
+# Playwright output
+/frontend/playwright-report/
+/frontend/test-results/
+
 # k6 results (keep scripts, not raw output)
 /infra/k6/results/
 
