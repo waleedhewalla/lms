@@ -88,11 +88,14 @@ public sealed class NotificationConsumer(
             return tpl is null ? fallback : NotificationPlanner.Render(tpl.BodyTemplate, values);
         }
         var priority = NotificationPlanner.PriorityFor(msg.RoutingKey, accelerated: false);
+        var preferences = await db.NotificationPreferences.Where(p => p.TenantId == tenantId).ToListAsync(ct);
         void Notify(Guid personId, string title, string body, string templateCode = "", IReadOnlyDictionary<string, string>? values = null)
         {
             values ??= new Dictionary<string, string>();
             foreach (var channel in NotificationPlanner.ChannelsFor(priority))
             {
+                var pref = preferences.FirstOrDefault(p => p.PersonId == personId && p.Channel == channel);
+                if (!NotificationPreference.Allows(pref, channel, priority, now)) continue;
                 var rendered = string.IsNullOrEmpty(templateCode) ? body : ApplyTemplate(templateCode, channel, body, values);
                 // Only InApp is delivered today; other channels are queued honestly for provider wiring.
                 var status = channel == NotificationChannel.InApp ? NotificationStatus.Sent : NotificationStatus.Queued;

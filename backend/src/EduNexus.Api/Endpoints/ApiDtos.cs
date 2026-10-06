@@ -38,7 +38,7 @@ public sealed record CreateDecisionActionReq(Guid TenantId, Guid AssigneeId, str
 public sealed record AdvanceActionReq(Guid TenantId, string Status);
 public sealed record CreatePolicyReq(Guid TenantId, string Code, string Title, string? Content);
 public sealed record PublishPolicyReq(Guid TenantId);
-public sealed record AcknowledgePolicyReq(Guid TenantId, Guid PersonId);
+public sealed record AcknowledgePolicyReq(Guid TenantId, Guid? PersonId);
 public sealed record CreateDocumentReq(Guid TenantId, string Title);
 public sealed record UploadUrlReq(Guid TenantId, string FileName);
 public sealed record AddVersionReq(Guid TenantId, string ObjectKey, long SizeBytes, string? Sha256, bool Publish);

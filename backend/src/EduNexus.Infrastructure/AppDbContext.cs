@@ -66,6 +66,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<DocumentRetentionPolicy> DocumentRetentionPolicies => Set<DocumentRetentionPolicy>();
     public DbSet<CorrespondenceRoutingSlip> CorrespondenceRoutingSlips => Set<CorrespondenceRoutingSlip>();
     public DbSet<DocumentActionRule> DocumentActionRules => Set<DocumentActionRule>();
+    public DbSet<CalendarEvent> CalendarEvents => Set<CalendarEvent>();
+    public DbSet<MeetingMinutes> MeetingMinutes => Set<MeetingMinutes>();
+    public DbSet<PolicyVersion> PolicyVersions => Set<PolicyVersion>();
+    public DbSet<Procedure> Procedures => Set<Procedure>();
+    public DbSet<DecisionActionEvidence> DecisionActionEvidences => Set<DecisionActionEvidence>();
+    public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -459,6 +466,57 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(x => x.TriggerValue).HasMaxLength(100).IsRequired();
             e.Property(x => x.ActionType).HasMaxLength(50).IsRequired();
             e.Property(x => x.TargetValue).HasMaxLength(500);
+        });
+        // --- R0.2 Wave C ---
+        b.Entity<CalendarEvent>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.StartsAt });
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Location).HasMaxLength(200);
+            e.Property(x => x.SourceType).HasMaxLength(50);
+        });
+        b.Entity<MeetingMinutes>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.MeetingId, x.Version }).IsUnique();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Content).IsRequired();
+        });
+        b.Entity<PolicyVersion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PolicyId, x.Version }).IsUnique();
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.ChangeNote).HasMaxLength(1000);
+        });
+        b.Entity<Procedure>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+        });
+        b.Entity<DecisionActionEvidence>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.ActionId });
+            e.Property(x => x.ObjectKey).HasMaxLength(500).IsRequired();
+            e.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+        });
+        b.Entity<SlaPolicy>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EntityType }).IsUnique();
+            e.Property(x => x.EntityType).HasMaxLength(50).IsRequired();
+        });
+        b.Entity<NotificationPreference>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PersonId, x.Channel }).IsUnique();
+            e.Property(x => x.Channel).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.MinPriority).HasConversion<string>().HasMaxLength(20);
         });
     }
 }

@@ -153,6 +153,7 @@ app.MapIntelligenceEndpoints();
 app.MapReadEndpoints();
 app.MapWorkEndpoints();
 app.MapReportEndpoints();
+app.MapGovernanceDepthEndpoints();
 
 if (args.Contains("--migrate-only"))
 {

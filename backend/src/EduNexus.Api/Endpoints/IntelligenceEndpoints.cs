@@ -388,7 +388,8 @@ public static class IntelligenceEndpoints
             }
             else if (req.ReviewerId.HasValue)
             {
-                var approval = new Approval(Guid.NewGuid(), req.TenantId, nameof(Request), id, req.ReviewerId.Value, ApprovalStatus.Pending, ApprovalPriority.Normal, DateTimeOffset.UtcNow.AddDays(3), null, null, null);
+                var dueAt = await GovernanceDepthEndpoints.DueAtAsync(db, req.TenantId, nameof(Request), TimeSpan.FromDays(3), ct);
+                var approval = new Approval(Guid.NewGuid(), req.TenantId, nameof(Request), id, req.ReviewerId.Value, ApprovalStatus.Pending, ApprovalPriority.Normal, dueAt, null, null, null);
                 db.Approvals.Add(approval);
                 db.WorkTasks.Add(new WorkTask(Guid.NewGuid(), req.TenantId, $"Review Request {r.Number}", req.ReviewerId.Value, approval.Id, WorkTaskStatus.Open, approval.DueAt, DateTimeOffset.UtcNow));
                 DomainEvents.Record(db, req.TenantId, "RequestSubmitted", "RequestSubmitted", nameof(Request), id.ToString(), payload: new { tenantId = req.TenantId, requestId = id, reviewerId = req.ReviewerId.Value }, details: r.Number);

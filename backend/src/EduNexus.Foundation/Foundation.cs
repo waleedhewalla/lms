@@ -173,7 +173,8 @@ public sealed record TenantSequence(Guid TenantId, string Scope, long NextValue)
 
 public sealed record Committee(Guid Id, Guid TenantId, string Code, string Name, bool IsActive);
 
-public sealed record CommitteeMember(Guid Id, Guid TenantId, Guid CommitteeId, Guid PersonId, string Role, DateTimeOffset JoinedAt);
+public sealed record CommitteeMember(Guid Id, Guid TenantId, Guid CommitteeId, Guid PersonId, string Role, DateTimeOffset JoinedAt,
+    DateTimeOffset? TermEndsAt = null);
 
 public enum MeetingStatus { Scheduled, InProgress, Concluded, Cancelled }
 
@@ -199,9 +200,10 @@ public sealed record DecisionAction(
     Guid Id, Guid TenantId, Guid DecisionId, Guid AssigneeId, string Description,
     DecisionActionStatus Status, DateTimeOffset DueAt);
 
-public enum PolicyStatus { Draft, Published, Retired }
+public enum PolicyStatus { Draft, Published, Retired, Review, LegalReview, Approval }
 
-public sealed record Policy(Guid Id, Guid TenantId, string Code, string Title, string Content, PolicyStatus Status, int Version);
+public sealed record Policy(Guid Id, Guid TenantId, string Code, string Title, string Content, PolicyStatus Status, int Version,
+    DateTimeOffset? NextReviewAt = null, Guid? OwnerId = null);
 
 public sealed record PolicyAcknowledgement(Guid Id, Guid TenantId, Guid PolicyId, Guid PersonId, DateTimeOffset At);
 
@@ -374,3 +376,52 @@ public sealed record DocumentActionRule(
     string ActionType, string? TargetValue = null, bool IsActive = true);
 
 
+
+// ============================ R0.2 Wave C — Governance depth ============================
+
+public enum CalendarEventKind { Meeting, Deadline, PolicyReview, Exam, Training, Holiday, Other }
+
+/// <summary>Institutional calendar entry (BBP §4.15). Meetings and reviews are also projected into the calendar feed.</summary>
+public sealed record CalendarEvent(
+    Guid Id, Guid TenantId, string Title, CalendarEventKind Kind, DateTimeOffset StartsAt, DateTimeOffset EndsAt,
+    string? Location, string? SourceType, Guid? SourceId, Guid? OwnerId, DateTimeOffset CreatedAt);
+
+public enum MinutesStatus { Draft, Submitted, Approved }
+
+/// <summary>Versioned meeting minutes (BBP §8.14): each save is a new version; one version gets approved.</summary>
+public sealed record MeetingMinutes(
+    Guid Id, Guid TenantId, Guid MeetingId, int Version, string Content, MinutesStatus Status,
+    Guid AuthorId, DateTimeOffset CreatedAt, Guid? ApprovedBy = null, DateTimeOffset? ApprovedAt = null);
+
+/// <summary>Immutable snapshot of a policy revision (BBP §8.16).</summary>
+public sealed record PolicyVersion(
+    Guid Id, Guid TenantId, Guid PolicyId, int Version, string Title, string Content,
+    string? ChangeNote, Guid? CreatedBy, DateTimeOffset CreatedAt);
+
+public sealed record Procedure(Guid Id, Guid TenantId, Guid? PolicyId, string Code, string Title, string Steps, int Version, bool IsActive);
+
+public sealed record DecisionActionEvidence(
+    Guid Id, Guid TenantId, Guid ActionId, string ObjectKey, string FileName, string? Note, Guid UploadedBy, DateTimeOffset At);
+
+/// <summary>Default SLA for an entity type (e.g. "Request"): hours to respond before the item is overdue.</summary>
+public sealed record SlaPolicy(Guid Id, Guid TenantId, string EntityType, int ResponseHours, int EscalateAfterHours, bool IsActive);
+
+/// <summary>A person's delivery preference for one channel (BBP §10.3).</summary>
+public sealed record NotificationPreference(
+    Guid Id, Guid TenantId, Guid PersonId, NotificationChannel Channel, bool Enabled,
+    NotificationPriority MinPriority, int? QuietFromHour, int? QuietToHour)
+{
+    /// <summary>
+    /// Whether a notification may go out on this channel. In-app and Emergency always go out; otherwise the
+    /// channel must be enabled, the priority at or above the minimum, and (below Urgent) outside quiet hours (UTC).
+    /// </summary>
+    public static bool Allows(NotificationPreference? pref, NotificationChannel channel, NotificationPriority priority, DateTimeOffset now)
+    {
+        if (channel == NotificationChannel.InApp || priority == NotificationPriority.Emergency || pref is null) return true;
+        if (!pref.Enabled || priority < pref.MinPriority) return false;
+        if (priority >= NotificationPriority.Urgent || pref.QuietFromHour is not { } from || pref.QuietToHour is not { } to || from == to) return true;
+        var h = now.UtcDateTime.Hour;
+        var quiet = from < to ? h >= from && h < to : h >= from || h < to;
+        return !quiet;
+    }
+}

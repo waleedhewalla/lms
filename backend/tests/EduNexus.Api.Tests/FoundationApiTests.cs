@@ -297,6 +297,121 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task WaveC_Governance_Calendar_Minutes_Decisions_Policies_Preferences_Sla()
+    {
+        var perms = AllPerms.Concat(["committee:create", "committee:read", "meeting:create", "meeting:read", "meeting:update",
+            "minutes:approve", "decision:create", "decision:read", "action:update", "action:verify", "policy:create", "policy:read",
+            "calendar:read", "calendar:manage", "notification:read", "sla:manage", "approval:read", "request:create", "request:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Wave C Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        async Task<Guid> MkPerson(string name) => IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var chair = await MkPerson("Chair Huda");
+        var secretary = await MkPerson("Secretary Omar");
+        var outsider = await MkPerson("Outsider Nadia");
+        var chairC = ClientAs(tenant, perms, chair);
+        var secC = ClientAs(tenant, perms, secretary);
+
+        // committee + members + term + detail
+        var committee = IdOf(await (await client.PostAsJsonAsync("/api/committees", new { tenantId = tenant, code = Uid("C"), name = "Academic Council" }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        var chairMember = IdOf(await (await client.PostAsJsonAsync($"/api/committees/{committee}/members", new { tenantId = tenant, personId = chair, role = "Chair" }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        await client.PostAsJsonAsync($"/api/committees/{committee}/members", new { tenantId = tenant, personId = secretary, role = "Secretary" });
+        var term = await client.PostAsJsonAsync($"/api/committees/{committee}/members/{chairMember}/term",
+            new { tenantId = tenant, termEndsAt = DateTimeOffset.UtcNow.AddYears(2), role = (string?)null });
+        Assert.Equal(HttpStatusCode.OK, term.StatusCode);
+        Assert.Equal(2, (await client.GetFromJsonAsync<JsonElement>($"/api/committees/{committee}?tenantId={tenant}")).GetProperty("members").GetArrayLength());
+
+        // meeting: agenda, check-in (members only), minutes v1 draft → v2 submitted → approve (not by author)
+        var starts = DateTimeOffset.UtcNow.AddDays(3);
+        var meeting = IdOf(await (await client.PostAsJsonAsync("/api/meetings", new { tenantId = tenant, committeeId = committee, title = "Council #1",
+            startsAt = starts, agenda = new[] { new { title = "Opening", description = (string?)null } } })).Content.ReadFromJsonAsync<JsonElement>());
+        var item = await client.PostAsJsonAsync($"/api/meetings/{meeting}/agenda-items", new { tenantId = tenant, title = "Budget", description = "FY27" });
+        Assert.Equal(2, (await item.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("order").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await chairC.PostAsJsonAsync($"/api/meetings/{meeting}/check-in", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ClientAs(tenant, perms, outsider).PostAsJsonAsync($"/api/meetings/{meeting}/check-in", new { tenantId = tenant })).StatusCode);
+        await secC.PostAsJsonAsync($"/api/meetings/{meeting}/minutes", new { tenantId = tenant, content = "Draft notes", submit = false });
+        var v2 = IdOf(await (await secC.PostAsJsonAsync($"/api/meetings/{meeting}/minutes", new { tenantId = tenant, content = "Final minutes", submit = true }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.Forbidden, (await secC.PostAsJsonAsync($"/api/minutes/{v2}/approve", new { tenantId = tenant })).StatusCode);
+        Assert.Equal("Approved", (await (await chairC.PostAsJsonAsync($"/api/minutes/{v2}/approve", new { tenantId = tenant }))
+            .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        Assert.Equal(2, (await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meeting}/minutes?tenantId={tenant}")).GetArrayLength());
+
+        // decision → action → evidence (assignee) → done → verify (not assignee) → Implemented → Verified → Closed
+        var decision = IdOf(await (await client.PostAsJsonAsync($"/api/meetings/{meeting}/decisions", new { tenantId = tenant, text = "Adopt new grading policy" }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        var action = IdOf(await (await client.PostAsJsonAsync($"/api/decisions/{decision}/actions",
+            new { tenantId = tenant, assigneeId = secretary, description = "Draft grading policy", dueAt = DateTimeOffset.UtcNow.AddDays(10) })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/decisions/{decision}/transition", new { tenantId = tenant, status = "Implemented" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await chairC.PostAsJsonAsync($"/api/decision-actions/{action}/evidence",
+            new { tenantId = tenant, objectKey = "x", fileName = "x.pdf", note = (string?)null })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await secC.PostAsJsonAsync($"/api/decision-actions/{action}/evidence",
+            new { tenantId = tenant, objectKey = $"{tenant}/evidence/policy.pdf", fileName = "policy.pdf", note = "v1" })).StatusCode);
+        await client.PostAsJsonAsync($"/api/decision-actions/{action}/advance", new { tenantId = tenant, status = "Done" });
+        Assert.Equal(HttpStatusCode.Forbidden, (await secC.PostAsJsonAsync($"/api/decision-actions/{action}/verify", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await chairC.PostAsJsonAsync($"/api/decision-actions/{action}/verify", new { tenantId = tenant })).StatusCode);
+        foreach (var s in new[] { "Implemented", "Verified", "Closed" })
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/decisions/{decision}/transition", new { tenantId = tenant, status = s })).StatusCode);
+        var dd = await client.GetFromJsonAsync<JsonElement>($"/api/decisions/{decision}?tenantId={tenant}");
+        Assert.Equal(100.0, dd.GetProperty("implementationPct").GetDouble());
+        Assert.Equal(1, dd.GetProperty("evidence").GetArrayLength());
+
+        // policy lifecycle: Draft → Review → LegalReview → Approval → Published, revise → v2 Draft, review schedule, retire
+        var policy = IdOf(await (await client.PostAsJsonAsync("/api/policies", new { tenantId = tenant, code = Uid("POL"), title = "Grading", content = "v1 text" }))
+            .Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/policies/{policy}/transition", new { tenantId = tenant, status = "Published" })).StatusCode);
+        foreach (var s in new[] { "Review", "LegalReview", "Approval", "Published" })
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/policies/{policy}/transition", new { tenantId = tenant, status = s })).StatusCode);
+        var revised = await (await chairC.PostAsJsonAsync($"/api/policies/{policy}/versions",
+            new { tenantId = tenant, title = (string?)null, content = "v2 text", changeNote = "Clarified rubric", nextReviewAt = DateTimeOffset.UtcNow.AddDays(20) }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, revised.GetProperty("version").GetInt32());
+        Assert.Equal("Draft", revised.GetProperty("status").GetString());
+        var pd = await client.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}?tenantId={tenant}");
+        Assert.Equal(2, pd.GetProperty("versions").GetArrayLength());
+        Assert.Equal(1, (await client.GetFromJsonAsync<JsonElement>($"/api/policies/reviews/upcoming?tenantId={tenant}&days=30")).GetArrayLength());
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/procedures",
+            new { tenantId = tenant, policyId = policy, code = Uid("PR"), title = "Grade appeal", steps = "1. Submit\n2. Review" })).StatusCode);
+
+        // calendar feed merges meeting + policy review + stored event; ICS export
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/calendar/events", new { tenantId = tenant, title = "Final exams",
+            kind = "Exam", startsAt = DateTimeOffset.UtcNow.AddDays(5), endsAt = DateTimeOffset.UtcNow.AddDays(6), location = "Hall A" })).StatusCode);
+        var feed = await client.GetFromJsonAsync<JsonElement>($"/api/calendar/events?tenantId={tenant}");
+        var kinds = feed.EnumerateArray().Select(e => e.GetProperty("kind").GetString()).ToList();
+        Assert.Contains("Meeting", kinds);
+        Assert.Contains("PolicyReview", kinds);
+        Assert.Contains("Exam", kinds);
+        var ics = await client.GetAsync($"/api/calendar/export.ics?tenantId={tenant}");
+        Assert.Equal("text/calendar", ics.Content.Headers.ContentType!.MediaType);
+        var icsText = await ics.Content.ReadAsStringAsync();
+        Assert.StartsWith("BEGIN:VCALENDAR", icsText);
+        Assert.Contains("SUMMARY:Final exams", icsText);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/policies/{policy}/retire", new { tenantId = tenant })).StatusCode);
+
+        // notification preferences (self) + SLA policy drives approval due dates
+        var put = await secC.PutAsJsonAsync("/api/notifications/preferences", new { tenantId = tenant,
+            preferences = new[] { new { channel = "Email", enabled = false, minPriority = (string?)null, quietFromHour = (int?)null, quietToHour = (int?)null } } });
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        var prefs = await secC.GetFromJsonAsync<JsonElement>($"/api/notifications/preferences?tenantId={tenant}");
+        Assert.False(prefs.EnumerateArray().First(p => p.GetProperty("channel").GetString() == "Email").GetProperty("enabled").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/sla/policies",
+            new { tenantId = tenant, entityType = "Request", responseHours = 8, escalateAfterHours = 24, isActive = true })).StatusCode);
+        var req = IdOf(await (await client.PostAsJsonAsync("/api/requests", new { tenantId = tenant, category = "IT", title = "Projector",
+            submitterId = secretary, formId = (Guid?)null, dataJson = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var sub = await client.PostAsJsonAsync($"/api/requests/{req}/submit", new { tenantId = tenant, reviewerId = chair, workflowCode = (string?)null });
+        var approvalId = (await sub.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var approvals = await client.GetFromJsonAsync<JsonElement>($"/api/approvals?tenantId={tenant}&assigneeId={chair}");
+        var due = approvals.EnumerateArray().First(a => a.GetProperty("id").GetGuid() == approvalId).GetProperty("dueAt").GetDateTimeOffset();
+        Assert.InRange(due, DateTimeOffset.UtcNow.AddHours(7), DateTimeOffset.UtcNow.AddHours(9));
+    }
+
+    [Fact]
     public async Task Tenant_DuplicateSlug_409()
     {
         var client = factory.CreateClient();
@@ -586,10 +701,14 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
             new { tenantId = tenant, code = "POL-001", title = "Attendance policy", content = "Be present." })).Content.ReadFromJsonAsync<JsonElement>());
         var pub = await client.PostAsJsonAsync($"/api/policies/{policy}/publish", new { tenantId = tenant });
         Assert.Equal(HttpStatusCode.OK, pub.StatusCode);
-        var ack = await client.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
+        var onBehalf = await client.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
+            new { tenantId = tenant, personId = member });
+        Assert.Equal(HttpStatusCode.Forbidden, onBehalf.StatusCode); // no acknowledging for someone else
+        var memberClient = ClientAs(tenant, perms, member);
+        var ack = await memberClient.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
             new { tenantId = tenant, personId = member });
         Assert.Equal(HttpStatusCode.Created, ack.StatusCode);
-        var dupAck = await client.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
+        var dupAck = await memberClient.PostAsJsonAsync($"/api/policies/{policy}/acknowledge",
             new { tenantId = tenant, personId = member });
         Assert.Equal(HttpStatusCode.Conflict, dupAck.StatusCode);
         var pending = await client.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}/pending?tenantId={tenant}");
