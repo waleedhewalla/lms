@@ -578,10 +578,11 @@ public static class IntelligenceEndpoints
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (a is null) return Results.NotFound(new { error = "Approval not found." });
-            if (a.AssigneeId != req.DecidedBy) return Results.Forbid();
+            var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
+            if (actor is null || (req.DecidedBy is { } claimed && claimed != actor) || a.AssigneeId != actor) return Results.Forbid();
             if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval is already {a.Status}." });
             var newStatus = req.Approve ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
-            db.Entry(a).CurrentValues.SetValues(a with { Status = newStatus, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = req.DecidedBy, Comment = req.Comment });
+            db.Entry(a).CurrentValues.SetValues(a with { Status = newStatus, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = actor, Comment = req.Comment });
             if (a.EntityType == nameof(Correspondence))
             {
                 var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == a.EntityId, ct);
@@ -614,7 +615,10 @@ public static class IntelligenceEndpoints
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (a is null) return Results.NotFound(new { error = "Approval not found." });
-            db.Entry(a).CurrentValues.SetValues(a with { Status = ApprovalStatus.Rejected, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = req.DecidedBy, Comment = req.Comment });
+            var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
+            if (actor is null || (req.DecidedBy is { } claimed && claimed != actor) || a.AssigneeId != actor) return Results.Forbid();
+            if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval is already {a.Status}." });
+            db.Entry(a).CurrentValues.SetValues(a with { Status = ApprovalStatus.Rejected, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = actor, Comment = req.Comment });
 
             if (a.EntityType == nameof(Request))
             {
@@ -638,8 +642,16 @@ public static class IntelligenceEndpoints
             var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (a is null) return Results.NotFound(new { error = "Approval not found." });
 
-            var deputyId = req.DelegateTo ?? req.DeputyPersonId ?? req.DecidedBy ?? req.DelegatedBy ?? Guid.Empty;
+            var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
+            var claimed = req.DelegatedBy ?? req.DecidedBy;
+            if (actor is null || (claimed is { } c && c != actor) || a.AssigneeId != actor) return Results.Forbid();
+            if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval is already {a.Status}." });
+
+            var deputyId = req.DelegateTo ?? req.DeputyPersonId ?? Guid.Empty;
             if (deputyId == Guid.Empty) return Results.BadRequest(new { error = "Delegate person id required." });
+            if (deputyId == actor) return Results.BadRequest(new { error = "Cannot delegate to yourself." });
+            if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == deputyId, ct))
+                return Results.BadRequest(new { error = "Delegate person not found in this tenant." });
 
             db.Entry(a).CurrentValues.SetValues(a with { AssigneeId = deputyId });
 
@@ -751,6 +763,7 @@ public static class IntelligenceEndpoints
         var chatter = app.MapGroup("/api/chatter").WithTags("Chatter").RequireAuthorization();
         chatter.MapPost("/comments", async (AppDbContext db, HttpContext ctx, CreateChatterCommentReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("chatter:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Content)) return Results.BadRequest(new { error = "Content required." });
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
@@ -763,6 +776,7 @@ public static class IntelligenceEndpoints
         });
         chatter.MapGet("/comments", async (AppDbContext db, HttpContext ctx, Guid tenantId, string entityType, Guid entityId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("chatter:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var list = await db.RecordComments
@@ -773,6 +787,7 @@ public static class IntelligenceEndpoints
         });
         chatter.MapPost("/follow", async (AppDbContext db, HttpContext ctx, FollowChatterReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("chatter:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var follower = new EntityFollower(Guid.NewGuid(), req.TenantId, req.EntityType.Trim(), req.EntityId, req.PersonId, DateTimeOffset.UtcNow);
@@ -787,6 +802,7 @@ public static class IntelligenceEndpoints
         });
         chatter.MapGet("/followers", async (AppDbContext db, HttpContext ctx, Guid tenantId, string entityType, Guid entityId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("chatter:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var list = await db.EntityFollowers
@@ -799,6 +815,7 @@ public static class IntelligenceEndpoints
         var activities = app.MapGroup("/api/activities").WithTags("Activities").RequireAuthorization();
         activities.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateActivityReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("activity:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (!Enum.TryParse<ActivityType>(req.Type, true, out var atype))
                 return Results.BadRequest(new { error = "Invalid activity type." });
@@ -812,6 +829,7 @@ public static class IntelligenceEndpoints
         });
         activities.MapGet("/my", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid personId, bool? completed, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("activity:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var q = db.ScheduledActivities.Where(a => a.TenantId == tenantId && a.AssigneeId == personId);
@@ -820,6 +838,7 @@ public static class IntelligenceEndpoints
         });
         activities.MapPatch("/{id:guid}/complete", async (AppDbContext db, HttpContext ctx, Guid id, CompleteActivityReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("activity:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var act = await db.ScheduledActivities.FirstOrDefaultAsync(a => a.TenantId == req.TenantId && a.Id == id, ct);

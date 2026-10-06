@@ -18,10 +18,18 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         "person:create", "person:read", "role:create", "role:assign", "role:read", "audit:read",
     ];
 
-    private string Mint(Guid tenantId, IEnumerable<string>? perms = null)
+    private string Mint(Guid tenantId, IEnumerable<string>? perms = null, Guid? personId = null)
     {
         var tokens = factory.Services.GetRequiredService<DevTokenService>();
-        return tokens.Mint("tests", tenantId, perms ?? AllPerms);
+        return tokens.Mint("tests", tenantId, perms ?? AllPerms, personId: personId);
+    }
+
+    /// <summary>A client whose token acts as <paramref name="personId"/> (person_id claim).</summary>
+    private HttpClient ClientAs(Guid tenantId, IEnumerable<string> perms, Guid personId)
+    {
+        var c = factory.CreateClient();
+        Auth(c, Mint(tenantId, perms, personId));
+        return c;
     }
 
     private static void Auth(HttpClient c, string token) =>
@@ -215,14 +223,23 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var tasks = await client.GetFromJsonAsync<JsonElement>($"/api/tasks?tenantId={tenant}&assigneeId={reviewer}");
         Assert.Equal(1, tasks.GetArrayLength());
 
-        // wrong decider → 403; right decider approves
-        var stranger = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+        // the decider is the token's person, never the body: no person → 403, wrong person → 403,
+        // claiming to be the reviewer from the author's token → 403; the reviewer's own token approves
+        var anonymous = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+            new { tenantId = tenant, decidedBy = reviewer, approve = true, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.Forbidden, anonymous.StatusCode);
+        var authorClient = ClientAs(tenant, perms, author);
+        var stranger = await authorClient.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
             new { tenantId = tenant, decidedBy = author, approve = true, comment = (string?)null });
         Assert.Equal(HttpStatusCode.Forbidden, stranger.StatusCode);
-        var decide = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+        var impersonation = await authorClient.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+            new { tenantId = tenant, decidedBy = reviewer, approve = true, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.Forbidden, impersonation.StatusCode);
+        var reviewerClient = ClientAs(tenant, perms, reviewer);
+        var decide = await reviewerClient.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
             new { tenantId = tenant, decidedBy = reviewer, approve = true, comment = "Looks good" });
         Assert.Equal(HttpStatusCode.OK, decide.StatusCode);
-        var again = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+        var again = await reviewerClient.PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
             new { tenantId = tenant, decidedBy = reviewer, approve = true, comment = (string?)null });
         Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
 
@@ -470,7 +487,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.NotEqual(Guid.Empty, approval1);
 
         // step 1: dept head approves → step 2 pending for dean
-        var d1 = await client.PostAsJsonAsync($"/api/approvals/{approval1}/decide",
+        var d1 = await ClientAs(tenant, perms, head).PostAsJsonAsync($"/api/approvals/{approval1}/decide",
             new { tenantId = tenant, decidedBy = head, approve = true, comment = (string?)null });
         Assert.Equal(HttpStatusCode.OK, d1.StatusCode);
         var pending = await client.GetFromJsonAsync<JsonElement>($"/api/approvals?tenantId={tenant}&assigneeId={dean}&status=Pending");
@@ -478,7 +495,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var approval2 = pending[0].GetProperty("id").GetGuid();
 
         // step 2: dean approves → task created → instance completed
-        var d2 = await client.PostAsJsonAsync($"/api/approvals/{approval2}/decide",
+        var d2 = await ClientAs(tenant, perms, dean).PostAsJsonAsync($"/api/approvals/{approval2}/decide",
             new { tenantId = tenant, decidedBy = dean, approve = true, comment = (string?)null });
         Assert.Equal(HttpStatusCode.OK, d2.StatusCode);
         var tasks = await client.GetFromJsonAsync<JsonElement>($"/api/tasks?tenantId={tenant}&assigneeId={employee}");
@@ -496,7 +513,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var sub2 = await client.PostAsJsonAsync($"/api/requests/{req2Id}/submit",
             new { tenantId = tenant, reviewerId = (Guid?)null, workflowCode = "FAC-ADMIN" });
         var rejApproval = (await sub2.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
-        var rej = await client.PostAsJsonAsync($"/api/approvals/{rejApproval}/decide",
+        var rej = await ClientAs(tenant, perms, head).PostAsJsonAsync($"/api/approvals/{rejApproval}/decide",
             new { tenantId = tenant, decidedBy = head, approve = false, comment = "No" });
         Assert.Equal(HttpStatusCode.OK, rej.StatusCode);
         var rejected = await client.GetFromJsonAsync<JsonElement>($"/api/workflows/instances?tenantId={tenant}&status=Rejected");
@@ -849,7 +866,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var sub = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit",
             new { tenantId = tenant, reviewerId = reviewer, workflowCode = (string?)null });
         var approvalId = (await sub.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
-        var rc = await client.PostAsJsonAsync($"/api/approvals/{approvalId}/request-changes",
+        var rc = await ClientAs(tenant, perms, reviewer).PostAsJsonAsync($"/api/approvals/{approvalId}/request-changes",
             new { tenantId = tenant, decidedBy = reviewer, comment = "Add business justification" });
         Assert.Equal(HttpStatusCode.OK, rc.StatusCode);
         var reqs = await client.GetFromJsonAsync<JsonElement>($"/api/requests?tenantId={tenant}&status=ChangesRequested");
@@ -865,7 +882,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var sub2 = await client.PostAsJsonAsync($"/api/requests/{req2Id}/submit",
             new { tenantId = tenant, reviewerId = reviewer, workflowCode = (string?)null });
         var approval2 = (await sub2.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
-        var del = await client.PostAsJsonAsync($"/api/approvals/{approval2}/delegate",
+        var del = await ClientAs(tenant, perms, reviewer).PostAsJsonAsync($"/api/approvals/{approval2}/delegate",
             new { tenantId = tenant, delegatedBy = reviewer, delegateTo = deputy });
         Assert.Equal(HttpStatusCode.OK, del.StatusCode);
         Assert.Equal(deputy, (await del.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("assigneeId").GetGuid());
@@ -940,7 +957,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     [Fact]
     public async Task Chatter_Comment_And_Follow_FullFlow()
     {
-        var perms = AllPerms.Concat(["correspondence:create", "correspondence:read"]).ToArray();
+        var perms = AllPerms.Concat(["correspondence:create", "correspondence:read", "chatter:read", "chatter:write"]).ToArray();
         var bootstrap = factory.CreateClient();
         Auth(bootstrap, Mint(Guid.NewGuid(), perms));
         var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
@@ -1014,7 +1031,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     [Fact]
     public async Task Activities_Schedule_Complete_And_MyWork_Flow()
     {
-        var perms = AllPerms.Concat(["correspondence:create", "inbox:read"]).ToArray();
+        var perms = AllPerms.Concat(["correspondence:create", "inbox:read", "activity:read", "activity:write"]).ToArray();
         var bootstrap = factory.CreateClient();
         Auth(bootstrap, Mint(Guid.NewGuid(), perms));
         var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",

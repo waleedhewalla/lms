@@ -30,7 +30,7 @@ public static class FoundationEndpoints
             if (!env.IsDevelopment() || !opts.EnableDevToken) return Results.NotFound();
             if (req.TenantId == Guid.Empty || string.IsNullOrWhiteSpace(req.Subject))
                 return Results.BadRequest(new { error = "subject and tenantId required." });
-            return Results.Ok(new { token = tokens.Mint(req.Subject, req.TenantId, req.Permissions ?? []) });
+            return Results.Ok(new { token = tokens.Mint(req.Subject, req.TenantId, req.Permissions ?? [], personId: req.PersonId) });
         }).AllowAnonymous();
 
         // --- Tenants (platform-level table, no RLS) ---

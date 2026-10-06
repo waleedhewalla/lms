@@ -11,8 +11,9 @@ public sealed class DevTokenService(IOptions<AuthOptions> options)
 {
     public const string PermissionClaim = "permission";
     public const string TenantClaim = "tenant_id";
+    public const string PersonClaim = "person_id";
 
-    public string Mint(string subject, Guid tenantId, IEnumerable<string> permissions, TimeSpan? lifetime = null)
+    public string Mint(string subject, Guid tenantId, IEnumerable<string> permissions, TimeSpan? lifetime = null, Guid? personId = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.Value.DevSigningKey));
         var claims = new List<Claim>
@@ -20,6 +21,7 @@ public sealed class DevTokenService(IOptions<AuthOptions> options)
             new(JwtRegisteredClaimNames.Sub, subject),
             new(TenantClaim, tenantId.ToString()),
         };
+        if (personId is { } pid && pid != Guid.Empty) claims.Add(new Claim(PersonClaim, pid.ToString()));
         claims.AddRange(permissions.Distinct().Select(p => new Claim(PermissionClaim, p)));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
@@ -40,4 +42,7 @@ public static class ClaimsPrincipalExtensions
 
     public static Guid? TenantId(this ClaimsPrincipal user) =>
         Guid.TryParse(user.FindFirstValue(DevTokenService.TenantClaim), out var id) ? id : null;
+
+    public static Guid? PersonIdClaim(this ClaimsPrincipal user) =>
+        Guid.TryParse(user.FindFirstValue(DevTokenService.PersonClaim), out var id) ? id : null;
 }

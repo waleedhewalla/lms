@@ -10,7 +10,7 @@ public sealed record CreateActivityReq(Guid TenantId, string EntityType, Guid En
 public sealed record CompleteActivityReq(Guid TenantId);
 public sealed record CreateWorkspaceReq(Guid TenantId, string Code, string Name, string? Description);
 public sealed record AddDocumentTagReq(Guid TenantId, string Category, string Value);
-public sealed record DevTokenReq(string Subject, Guid TenantId, string[]? Permissions);
+public sealed record DevTokenReq(string Subject, Guid TenantId, string[]? Permissions, Guid? PersonId = null);
 public sealed record CreateRoleReq(Guid TenantId, string Code, string Name, string[]? Permissions);
 public sealed record AssignRoleReq(Guid TenantId, Guid PersonId, string RoleCode, string? Scope, DateTimeOffset? ExpiresAt);
 public sealed record RevokeRoleReq(Guid TenantId, Guid PersonId, string RoleCode);
@@ -20,7 +20,7 @@ public sealed record CreateRoutingSlipReq(Guid TenantId, Guid FromPersonId, Guid
 public sealed record CastMeetingVoteReq(Guid TenantId, Guid AgendaItemId, Guid PersonId, string Choice, string? Remarks = null);
 public sealed record SetDocumentRetentionReq(Guid TenantId, string Standard, int RetentionPeriodMonths, string DispositionAction, int ReviewIntervalMonths, Guid? ReviewedByPersonId = null, string? Notes = null);
 public sealed record SubmitCorrespondenceReq(Guid TenantId, Guid ReviewerId);
-public sealed record DecideApprovalReq(Guid TenantId, Guid DecidedBy, bool Approve, string? Comment);
+public sealed record DecideApprovalReq(Guid TenantId, Guid? DecidedBy, bool Approve, string? Comment);
 public sealed record RequestChangesReq(Guid TenantId, Guid DecidedBy, string? Comment);
 public sealed record DelegateApprovalReq(Guid TenantId, Guid DelegatedBy, Guid DelegateTo);
 public sealed record CompleteTaskReq(Guid TenantId);
