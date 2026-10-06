@@ -13,6 +13,16 @@ namespace EduNexus.Api.Endpoints;
 
 public static class EndpointHelpers
 {
+    /// <summary>
+    /// Client-supplied object-storage keys must live under the tenant's own prefix ("{tenantId}/…") and
+    /// contain no path traversal, so a stored key can never address another tenant's file.
+    /// </summary>
+    public static IResult? BadRequestIfForeignObjectKey(Guid tenantId, string? objectKey) =>
+        objectKey is null || !objectKey.StartsWith($"{tenantId}/", StringComparison.OrdinalIgnoreCase)
+            || objectKey.Contains("..") || objectKey.Contains('\\')
+            ? Results.BadRequest(new { error = "objectKey must start with the tenant id prefix ({tenantId}/)." })
+            : null;
+
     public static IResult? ForbiddenIfCrossTenant(HttpContext ctx, Guid targetTenantId)
     {
         var claim = ctx.User.FindFirstValue("tenant_id");

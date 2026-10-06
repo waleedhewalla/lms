@@ -16,7 +16,9 @@ images and lints/renders the Helm chart (`deploy-artifacts` CI job).
 
 The API refuses to start with `ASPNETCORE_ENVIRONMENT=Production` unless `Auth:Authority` is set and
 `Auth:EnableDevToken=false`. Configure the IdP per `infra/keycloak/README.md` (claims `tenant_id`,
-`permission`, optional `person_id`, `email`), then create a **public** client for the web app:
+`permission`, optional `person_id`, `email`). **Keycloak:** import `infra/keycloak/realm-edunexus.json`
+(set `EDUNEXUS_WEB_URL` to the web origin); it contains everything below plus permission groups.
+Other IdPs: create a **public** client for the web app:
 
 - Client ID `edunexus-web`, standard flow (Authorization Code) on, PKCE method `S256`, no client secret.
 - Valid redirect URI `https://<web-host>/auth/callback`; post-logout redirect `https://<web-host>/`.

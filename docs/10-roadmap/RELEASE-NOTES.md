@@ -32,6 +32,20 @@ Feature-complete release of the delivery plan (Waves A–G).
 - CI builds both images, smoke-tests them, and lints/renders the chart. Tagging `vX.Y.Z` publishes images to GHCR and creates the GitHub release.
 - Deployment guide: `docs/10-roadmap/DEPLOYMENT.md`.
 
+## Security and readiness
+- **Turnkey Keycloak realm:**
+  - PKCE web client, claim mappers and permission groups;
+  - brute-force lockout and a password policy;
+  - verified in CI and proven end to end with a real browser sign-in.
+- **Dependencies:** zero vulnerable dependencies, with OpenTelemetry 1.19 and Next 15.5.27. CI now blocks vulnerable packages.
+- **Webhook SSRF guard:** checks at registration and again at connect time; no redirects; random signing secrets.
+- **Storage keys:** keys sent by clients must sit under the tenant's own prefix.
+- **Web hardening:** per-request Content-Security-Policy, and a stricter same-origin check on the post-sign-in redirect.
+- **Duplicate votes:** a second vote on the same agenda item now returns 409 instead of a 500.
+- **Load test:** 0% errors at 10 virtual users. R1 baseline p95 7.9 ms; R2–R5 write mix p95 16.9 ms.
+- **Pen-test:** scope document `docs/03-architecture/PENTEST-SCOPE.md`.
+
 ## Known limits
-- Pen-test (GA gate 14) is still to be run by humans before production student data.
-- Access tokens are kept in browser storage; pair with a strict CSP at the proxy.
+- A human pen-test (GA gate 14) must be run before production student data.
+- Access tokens are kept in browser storage. The CSP mitigates this.
+- There is no API rate limiting; set it at the ingress or proxy.

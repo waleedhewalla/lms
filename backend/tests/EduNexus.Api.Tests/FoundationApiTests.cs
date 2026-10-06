@@ -1166,7 +1166,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.Created, role.StatusCode);
 
         var reg = await client.PostAsJsonAsync("/api/integrations/endpoints",
-            new { tenantId = tenant, eventType = "RoleAssigned", targetUrl = "http://127.0.0.1:9/hook", secret = "s3cr3t" });
+            new { tenantId = tenant, eventType = "RoleAssigned", targetUrl = "http://hook.invalid/hook", secret = "s3cr3t" });
         Assert.Equal(HttpStatusCode.Created, reg.StatusCode);
         var badUrl = await client.PostAsJsonAsync("/api/integrations/endpoints",
             new { tenantId = tenant, eventType = "RoleAssigned", targetUrl = "not-a-url", secret = "x" });
@@ -1302,8 +1302,12 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
             new { tenantId = tenant, authorId = deputy, text = "Started installation" });
         Assert.Equal(HttpStatusCode.Created, comment.StatusCode);
         var ev = await client.PostAsJsonAsync($"/api/tasks/{taskId}/evidence",
-            new { tenantId = tenant, uploadedBy = deputy, objectKey = "t/key.pdf", fileName = "key.pdf" });
+            new { tenantId = tenant, uploadedBy = deputy, objectKey = $"{tenant}/tasks/key.pdf", fileName = "key.pdf" });
         Assert.Equal(HttpStatusCode.Created, ev.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync($"/api/tasks/{taskId}/evidence",
+            new { tenantId = tenant, uploadedBy = deputy, objectKey = $"{Guid.NewGuid()}/stolen.pdf", fileName = "x.pdf" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync($"/api/tasks/{taskId}/evidence",
+            new { tenantId = tenant, uploadedBy = deputy, objectKey = $"{tenant}/../other/x.pdf", fileName = "x.pdf" })).StatusCode);
         var detail = await client.GetFromJsonAsync<JsonElement>($"/api/tasks/{taskId}?tenantId={tenant}");
         Assert.Equal("Install and configure", detail.GetProperty("description").GetString());
         Assert.Equal(40, detail.GetProperty("progress").GetInt32());
@@ -1670,6 +1674,16 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         });
         Assert.Equal(HttpStatusCode.OK, voteRes2.StatusCode);
 
+        // A second vote by the same person on the same item is a clean conflict, not a database error.
+        var duplicate = await client.PostAsJsonAsync($"/api/meetings/{meetingId}/votes", new
+        {
+            tenantId = tenant,
+            agendaItemId = agendaItem.Id,
+            personId = p1,
+            choice = "Against"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+
         var votesSummary = await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meetingId}/votes?tenantId={tenant}");
         Assert.Equal(2, votesSummary.GetProperty("votes").GetArrayLength());
         var tallies = votesSummary.GetProperty("tallies");
@@ -2009,6 +2023,33 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
 
         var denied = await Preflight("https://evil.example.com");
         Assert.False(denied.Headers.Contains("Access-Control-Allow-Origin"));
+    }
+    [Theory]
+    [InlineData("http://127.0.0.1:8080/x")]
+    [InlineData("http://localhost/x")]
+    [InlineData("http://169.254.169.254/latest/meta-data")]
+    [InlineData("http://10.0.0.5/hook")]
+    [InlineData("http://192.168.1.10/hook")]
+    [InlineData("http://[::1]/hook")]
+    [InlineData("http://user:pass@example.com/hook")]
+    [InlineData("ftp://example.com/hook")]
+    public async Task Integrations_Rejects_Internal_Webhook_Targets(string url)
+    {
+        // URL validation runs before any data access, so a token for a fresh tenant id is enough.
+        var tenant = Guid.NewGuid();
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, ["integration:manage"]));
+        var res = await client.PostAsJsonAsync("/api/integrations/endpoints", new { tenantId = tenant, eventType = "RoleAssigned", targetUrl = url, secret = "s" });
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+    }
+
+    [Fact]
+    public void OutboundUrlGuard_Blocks_Internal_Addresses_At_Connect_Time()
+    {
+        foreach (var ip in new[] { "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "::1", "fd00::1", "fe80::1", "0.0.0.0", "::ffff:127.0.0.1" })
+            Assert.True(EduNexus.Api.Integrations.OutboundUrlGuard.IsBlocked(System.Net.IPAddress.Parse(ip)), ip);
+        foreach (var ip in new[] { "8.8.8.8", "1.1.1.1", "2606:4700:4700::1111" })
+            Assert.False(EduNexus.Api.Integrations.OutboundUrlGuard.IsBlocked(System.Net.IPAddress.Parse(ip)), ip);
     }
 }
 

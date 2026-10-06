@@ -60,7 +60,9 @@ export async function completeSignIn(search: string): Promise<string> {
   if (tokens.id_token) localStorage.setItem(ID_TOKEN_KEY, tokens.id_token);
   const tenant = claims()?.tenant_id;
   if (typeof tenant === "string") localStorage.setItem("edunexus.tenant", tenant);
-  return pending.returnTo.startsWith("/") ? pending.returnTo : "/my-work";
+  // Same-origin paths only: "//host" and "/\\host" would be treated as other origins by the browser.
+  const safe = /^\/(?![\/\\])/.test(pending.returnTo);
+  return safe ? pending.returnTo : "/my-work";
 }
 
 export async function signOut(): Promise<void> {

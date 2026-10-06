@@ -9,6 +9,7 @@ export const options = {
   ],
   thresholds: {
     http_req_failed: ['rate<0.01'],
+    checks: ['rate>0.99'],
     http_req_duration: ['p(95)<200'],
   },
 };
@@ -17,7 +18,9 @@ const BASE = __ENV.BASE_URL || 'http://127.0.0.1:5000';
 const PERMS = [
   'tenant:create', 'tenant:read', 'org:read', 'person:create', 'person:read',
   'correspondence:create', 'correspondence:read', 'meeting:create', 'meeting:read', 'meeting:update',
-  'document:create', 'document:read', 'audit:read'
+  'document:create', 'document:read', 'document:update', 'document:write', 'audit:read',
+  'committee:create', 'committee:read', 'activity:read', 'activity:write',
+  'inbox:read', 'analytics:read', 'approval:read', 'task:read', 'request:read', 'communication:read'
 ];
 
 export function setup() {
@@ -38,8 +41,9 @@ export function setup() {
   const tid = r.json('id');
   
   // Mint tenant-scoped token
-  r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: 'k6-write-mix', tenantId: tid, permissions: PERMS }), { headers: h });
-  const tenantAuth = { headers: { ...h, Authorization: `Bearer ${r.json('token')}` } };
+  r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: 'k6-write-mix', tenantId: tid, permissions: PERMS}), { headers: h });
+  const tenantToken = r.json('token');
+  const tenantAuth = { headers: { ...h, Authorization: `Bearer ${tenantToken}` } };
 
   // Create seed author/person
   r = http.post(`${BASE}/api/people`, JSON.stringify({ tenantId: tid, type: 'Employee', fullName: 'k6 Tester', email: 'k6@edunexus.edu' }), tenantAuth);
@@ -60,7 +64,12 @@ export function setup() {
   r = http.get(`${BASE}/api/meetings/${meetingId}/packet?tenantId=${tid}`, tenantAuth);
   const agendaItemId = r.json('agenda.0.id');
 
-  return { token: r.json('token'), tenantId: tid, authorId, docId, meetingId, agendaItemId };
+  // Re-mint acting as the seeded person so person-scoped reads (inbox counts) resolve.
+  r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: 'k6-write-mix', tenantId: tid, permissions: PERMS, personId: authorId }), { headers: h });
+  const personToken = r.json('token');
+  for (const [name, id] of Object.entries({ authorId, docId, committeeId, meetingId, agendaItemId }))
+    if (!id) throw new Error(`setup: could not seed ${name}`);
+  return { token: personToken || tenantToken, tenantId: tid, authorId, docId, meetingId, agendaItemId };
 }
 
 export default function (data) {
@@ -69,25 +78,34 @@ export default function (data) {
   const pick = Math.random();
   let r;
 
-  if (pick < 0.25) {
+  if (pick < 0.20) {
+    r = http.get(`${BASE}/api/inbox/counts?tenantId=${t}`, auth);
+    check(r, { 'inbox counts 200': (x) => x.status === 200 });
+  } else if (pick < 0.40) {
+    r = http.get(`${BASE}/api/dashboards/executive?tenantId=${t}`, auth);
+    check(r, { 'executive dashboard 200': (x) => x.status === 200 });
+  } else if (pick < 0.55) {
     // Write 1: Create Correspondence
     r = http.post(`${BASE}/api/correspondence`, JSON.stringify({
-      tenantId: t, type: 'Memo', subject: `Memo VU-${__VU}-${__ITER}`, content: 'k6 load test memo content', authorId: data.authorId
+      tenantId: t, type: 'Internal', subject: `Memo VU-${__VU}-${__ITER}`, content: 'k6 load test memo content', authorId: data.authorId
     }), auth);
     check(r, { 'correspondence create 201': (x) => x.status === 201 });
-  } else if (pick < 0.50) {
+    if (r.status !== 201 && __ITER < 2) console.warn(`correspondence ${r.status} ${r.body}`);
+  } else if (pick < 0.70) {
     // Write 2: Add Document Tag (triggers action rules)
     r = http.post(`${BASE}/api/documents/${data.docId}/tags`, JSON.stringify({
       tenantId: t, category: 'ISO', value: 'ISO-9001'
     }), auth);
     check(r, { 'document tag 201': (x) => x.status === 201 });
-  } else if (pick < 0.75) {
+    if (r.status !== 201 && __ITER < 2) console.warn(`tag ${r.status} ${r.body}`);
+  } else if (pick < 0.85) {
     // Write 3: Cast Meeting Vote
     if (data.agendaItemId) {
       r = http.post(`${BASE}/api/meetings/${data.meetingId}/votes`, JSON.stringify({
         tenantId: t, agendaItemId: data.agendaItemId, personId: data.authorId, choice: 'InFavor', remarks: 'k6 vote'
-      }), auth);
-      check(r, { 'meeting vote 201': (x) => x.status === 201 });
+      }), { ...auth, responseCallback: http.expectedStatuses(200, 409) });
+      // One vote per person per item: the first succeeds, repeats are a clean 409 (expected under load).
+      check(r, { 'meeting vote 200/409': (x) => x.status === 200 || x.status === 409 });
     }
   } else {
     // Write 4: Schedule Activity
@@ -95,6 +113,7 @@ export default function (data) {
       tenantId: t, entityType: 'Document', entityId: data.docId, type: 'Review', assigneeId: data.authorId, summary: `Review VU-${__VU}`, dueDate: new Date().toISOString()
     }), auth);
     check(r, { 'activity schedule 201': (x) => x.status === 201 });
+    if (r.status !== 201 && __ITER < 2) console.warn(`activity ${r.status} ${r.body}`);
   }
 
   sleep(0.2);

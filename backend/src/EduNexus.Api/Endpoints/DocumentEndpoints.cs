@@ -150,6 +150,7 @@ public static class DocumentEndpoints
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var d = await db.Documents.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (d is null) return Results.NotFound(new { error = "Document not found." });
+            if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey) is { } badKey) return badKey;
             var version = d.CurrentVersion + 1;
             db.DocumentVersions.Add(new DocumentVersion(Guid.NewGuid(), req.TenantId, id, version, req.ObjectKey, req.SizeBytes, req.Sha256 ?? "", DateTimeOffset.UtcNow));
             db.Entry(d).CurrentValues.SetValues(d with { CurrentVersion = version, Status = req.Publish ? DocumentStatus.Published : d.Status });

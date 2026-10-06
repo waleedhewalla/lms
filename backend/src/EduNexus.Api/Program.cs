@@ -79,7 +79,10 @@ builder.Services.AddSingleton(sp =>
 // --- AI (R5): tenant retrieval index + copilot + webhook fan-out ---
 builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.Section));
 builder.Services.AddHttpClient("ai").SetHandlerLifetime(TimeSpan.FromMinutes(5));
-builder.Services.AddHttpClient("integrations").SetHandlerLifetime(TimeSpan.FromMinutes(5));
+var allowPrivateTargets = builder.Configuration.GetValue<bool>(EduNexus.Api.Integrations.OutboundUrlGuard.AllowPrivateKey);
+builder.Services.AddHttpClient("integrations")
+    .ConfigurePrimaryHttpMessageHandler(() => EduNexus.Api.Integrations.OutboundUrlGuard.CreateHandler(allowPrivateTargets))
+    .SetHandlerLifetime(TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton(sp =>
 {
     var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiOptions>>().Value;
