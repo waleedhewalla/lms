@@ -4,6 +4,7 @@ import { useTranslation } from "./TranslationProvider";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { locale, setLocale, t } = useTranslation();
+  const L = (en: string, ar: string) => (locale === "ar" ? ar : en);
 
   return (
     <div className="app-container">
@@ -18,6 +19,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <Link href="/approvals" className="nav-link">{t("nav.approvals")}</Link>
           <Link href="/meetings" className="nav-link">{t("nav.meetings")}</Link>
           <Link href="/intelligence" className="nav-link">{t("nav.intelligence")}</Link>
+          <hr style={{ border: 0, borderTop: "1px solid rgba(148,163,184,0.25)", margin: "0.75rem 0" }} />
+          <Link href="/my-work" className="nav-link">📥 {L("My Work", "عملي")}</Link>
+          <Link href="/requests" className="nav-link">📝 {L("Requests", "الطلبات")}</Link>
+          <Link href="/tasks" className="nav-link">☑️ {L("Tasks", "المهام")}</Link>
+          <Link href="/governance" className="nav-link">🏛️ {L("Committees & Minutes", "اللجان والمحاضر")}</Link>
+          <Link href="/decisions" className="nav-link">⚖️ {L("Decisions", "القرارات")}</Link>
+          <Link href="/policies" className="nav-link">📘 {L("Policies", "السياسات")}</Link>
+          <Link href="/calendar" className="nav-link">🗓️ {L("Calendar", "التقويم")}</Link>
+          <Link href="/reports" className="nav-link">📈 {L("Reports", "التقارير")}</Link>
+          <Link href="/settings" className="nav-link">⚙️ {L("Settings", "الإعدادات")}</Link>
         </nav>
         <div style={{ marginTop: 'auto', opacity: 0.7, fontSize: '0.8rem' }}>
           <p>{t("app.title")}</p>

@@ -19,7 +19,7 @@ Each gate below is PASS, PARTIAL, or OPEN (v1.0.0 → v1.1.0 deltas noted).
 | 9 | Load test | PASS | k6 4006/4006, p95 ~15ms @10VUs (R1 paths; re-run for R2–R5 write mix before scale claims) |
 | 10 | Observability | PASS (v1.1.0) | Grafana datasource+dashboard provisioned, 3 Prometheus alerts evaluating; OTLP traces need collector |
 | 11 | Auth | PASS-local (v1.1.0) | Keycloak OIDC proven end-to-end (role→permission mapping, tenant claim, `RequireHttpsMetadata` non-prod exception); customer IdP = config task per `infra/keycloak/README.md` |
-| 12 | Frontend | PASS-slice (v1.1.0) | 9 routes (R1–R5) build on Next 15.5.25; polish/i18n pending |
+| 12 | Frontend | PASS (v1.3.0) | 18 routes build on Next 15.5; every module has a bilingual (EN/AR, RTL) screen: My Work, Requests, Tasks, Approvals, Correspondence, Governance, Decisions, Policies, Calendar, Reports, Intelligence, Settings; Playwright smoke screenshots against seeded API |
 | 13 | K8s/air-gap prod install | PASS (v1.1.0) | Helm chart lint+render verified, app images build + smoke-proven, AIRGAP.md runbook; EF migration Job included (`migrate-job.yaml`) |
 | 14 | Pen-test | IN-PROGRESS (Sprint 1) | Scope doc prepared; human pen-test scheduled for Sprint 1 window (SLA: Crit 24h, High 1w) |
 | 15 | Data migration tooling | PASS-slice (v1.1.0) | CSV directory import (dry-run + import) tested; SIS/ERP sync pending |
