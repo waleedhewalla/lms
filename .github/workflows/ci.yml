@@ -12,7 +12,7 @@ env:
 
 jobs:
   traceability:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,7 +20,7 @@ jobs:
       - run: python infra/ci/check-traceability.py
 
   backend:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16
@@ -41,18 +41,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: ${{ env.DOTNET_VERSION }} }
+        with: { dotnet-version: '${{ env.DOTNET_VERSION }}' }
       - run: dotnet build backend/EduNexus.sln --nologo -v minimal
       - run: dotnet test backend/EduNexus.sln --no-build --nologo -v minimal
         env:
           EDUNEXUS_CONNECTION: Host=localhost;Port=5433;Database=edunexus_test;Username=edunexus;Password=edunexus
 
   ef-dryrun:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: ${{ env.DOTNET_VERSION }} }
+        with: { dotnet-version: '${{ env.DOTNET_VERSION }}' }
       - run: dotnet tool install --global dotnet-ef --version 9.0.9
       - run: >
           dotnet-ef migrations script --idempotent
@@ -62,11 +62,11 @@ jobs:
       - run: test -s /tmp/edunexus-migration.sql && grep -c 'tenant_isolation' /tmp/edunexus-migration.sql
 
   frontend:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm, cache-dependency-path: frontend/package-lock.json }
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
       - run: npm run build
