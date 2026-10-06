@@ -23,6 +23,7 @@ public static class DocumentEndpoints
         var workspaces = app.MapGroup("/api/document-workspaces").WithTags("DocumentWorkspaces").RequireAuthorization();
         workspaces.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var list = await db.DocumentWorkspaces.Where(w => w.TenantId == tenantId).OrderBy(w => w.Name).ToListAsync(ct);
@@ -30,6 +31,7 @@ public static class DocumentEndpoints
         });
         workspaces.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateWorkspaceReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:update") && !ctx.User.HasPermission("document:manage") && !ctx.User.HasPermission("document:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { error = "Code and Name required." });
@@ -109,6 +111,7 @@ public static class DocumentEndpoints
         });
         docs.MapGet("/{id:guid}/shares", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var shares = await db.DocumentShares.Where(s => s.TenantId == tenantId && s.DocumentId == id).ToListAsync(ct);
@@ -161,6 +164,7 @@ public static class DocumentEndpoints
         // Retention policy
         docs.MapPost("/{id:guid}/retention-policy", async (AppDbContext db, HttpContext ctx, Guid id, SetDocumentRetentionReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:update") && !ctx.User.HasPermission("document:manage") && !ctx.User.HasPermission("document:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (!Enum.TryParse<DispositionAction>(req.DispositionAction, true, out var disp))
                 return Results.BadRequest(new { error = "DispositionAction must be Archive|PermanentPreservation|ReviewRequired|Disposal." });
@@ -186,6 +190,7 @@ public static class DocumentEndpoints
         var docTags = app.MapGroup("/api/documents").WithTags("DocumentTags").RequireAuthorization();
         docTags.MapPost("/{id:guid}/tags", async (AppDbContext db, HttpContext ctx, Guid id, AddDocumentTagReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:update") && !ctx.User.HasPermission("document:manage") && !ctx.User.HasPermission("document:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Category) || string.IsNullOrWhiteSpace(req.Value))
                 return Results.BadRequest(new { error = "Category and Value are required." });
@@ -278,6 +283,7 @@ public static class DocumentEndpoints
         });
         docTags.MapGet("/{id:guid}/tags", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var tags = await db.DocumentTags.Where(t => t.TenantId == tenantId && t.DocumentId == id).ToListAsync(ct);
@@ -285,6 +291,7 @@ public static class DocumentEndpoints
         });
         docTags.MapGet("/{id:guid}/retention-policy", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var policy = await db.DocumentRetentionPolicies.FirstOrDefaultAsync(p => p.TenantId == tenantId && p.DocumentId == id, ct);
@@ -293,6 +300,7 @@ public static class DocumentEndpoints
         });
         docTags.MapGet("/action-rules", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var rules = await db.DocumentActionRules.Where(r => r.TenantId == tenantId).ToListAsync(ct);
@@ -300,6 +308,7 @@ public static class DocumentEndpoints
         });
         docTags.MapPost("/action-rules", async (AppDbContext db, HttpContext ctx, CreateDocActionRuleReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:update") && !ctx.User.HasPermission("document:manage") && !ctx.User.HasPermission("document:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.TriggerCategory) || string.IsNullOrWhiteSpace(req.TriggerValue))
                 return Results.BadRequest(new { error = "Trigger category and value are required." });
@@ -322,6 +331,7 @@ public static class DocumentEndpoints
         });
         docTags.MapDelete("/action-rules/{ruleId:guid}", async (AppDbContext db, HttpContext ctx, Guid ruleId, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("document:update") && !ctx.User.HasPermission("document:manage") && !ctx.User.HasPermission("document:write")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var rule = await db.DocumentActionRules.FirstOrDefaultAsync(r => r.TenantId == tenantId && r.Id == ruleId, ct);

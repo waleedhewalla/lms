@@ -107,3 +107,13 @@ so the relay reads all tenants; isolation is enforced by consumer-side `tenant_i
 
 ## Integrations
 SIS/HR/Finance/ERP bi-di API+events; Teams Graph; Email SMTP/API in+out; SMS out; Identity OIDC/SAML/LDAP in; Zoom/Workspace bi-di. Connectors in R5.
+
+## Permission enforcement (every route checks a code, not just the tenant)
+- Forms/Requests/Workflows: `form:manage`; `request:create` (create, submit) / `request:read`; `workflow:manage` / `workflow:read`
+- Documents: workspaces, shares, tags, retention, action rules read with `document:read`; writes need `document:update|manage|write`
+- Quality / Strategy: `quality:read|manage`, `strategy:read|manage`
+- Search `search:read` · Analytics `analytics:read` · AI ask `ai:ask`, interactions `ai:read` · Integration deliveries `integration:read`
+- Communications `communication:create` (create, publish) · Notification templates `notification:manage` · receipts `notification:read`
+- Approvals: detail `approval:read`; request-changes/delegate `approval:decide` · SLA breaches `approval:read`
+- Tasks: detail/comments/evidence `task:read`; complete/patch/comment/evidence `task:update` · Inbox and My Work `inbox:read`
+- Not yet gated: `/api/chatter/*` and `/api/activities/*` (no codes defined yet)

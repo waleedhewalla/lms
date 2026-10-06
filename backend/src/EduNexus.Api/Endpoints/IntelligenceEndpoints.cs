@@ -25,12 +25,14 @@ public static class IntelligenceEndpoints
         var quality = app.MapGroup("/api/quality").WithTags("Quality").RequireAuthorization();
         quality.MapGet("/standards", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("quality:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             return Results.Ok(await db.Standards.Where(s => s.TenantId == tenantId).OrderBy(s => s.Code).ToListAsync(ct));
         });
         quality.MapPost("/standards", async (AppDbContext db, HttpContext ctx, CreateStandardReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest(new { error = "Code and Title required." });
@@ -47,6 +49,7 @@ public static class IntelligenceEndpoints
         });
         quality.MapPost("/criteria", async (AppDbContext db, HttpContext ctx, CreateCriterionReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.Standards.AnyAsync(s => s.TenantId == req.TenantId && s.Id == req.StandardId, ct))
@@ -59,6 +62,7 @@ public static class IntelligenceEndpoints
         });
         quality.MapPost("/evidence", async (AppDbContext db, HttpContext ctx, AddEvidenceReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.Criteria.AnyAsync(c => c.TenantId == req.TenantId && c.Id == req.CriterionId, ct))
@@ -73,6 +77,7 @@ public static class IntelligenceEndpoints
         });
         quality.MapPost("/findings", async (AppDbContext db, HttpContext ctx, CreateFindingReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (!Enum.TryParse<FindingSeverity>(req.Severity, true, out var sev))
                 return Results.BadRequest(new { error = "Severity must be Observation|Minor|Major." });
@@ -89,6 +94,7 @@ public static class IntelligenceEndpoints
         });
         quality.MapPost("/corrective-actions", async (AppDbContext db, HttpContext ctx, CreateCorrectiveActionReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("quality:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.Findings.AnyAsync(f => f.TenantId == req.TenantId && f.Id == req.FindingId, ct))
@@ -107,12 +113,14 @@ public static class IntelligenceEndpoints
         var strategy = app.MapGroup("/api/strategy").WithTags("Strategy").RequireAuthorization();
         strategy.MapGet("/plans", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("strategy:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             return Results.Ok(await db.StrategicPlans.Where(p => p.TenantId == tenantId).OrderByDescending(p => p.YearFrom).ToListAsync(ct));
         });
         strategy.MapPost("/plans", async (AppDbContext db, HttpContext ctx, CreatePlanReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var plan = new StrategicPlan(Guid.NewGuid(), req.TenantId, req.Title.Trim(), req.YearFrom, req.YearTo);
@@ -125,6 +133,7 @@ public static class IntelligenceEndpoints
         });
         strategy.MapPost("/objectives", async (AppDbContext db, HttpContext ctx, CreateObjectiveReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.StrategicPlans.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.PlanId, ct))
@@ -137,6 +146,7 @@ public static class IntelligenceEndpoints
         });
         strategy.MapPost("/kpis", async (AppDbContext db, HttpContext ctx, CreateKpiReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.Objectives.AnyAsync(o => o.TenantId == req.TenantId && o.Id == req.ObjectiveId, ct))
@@ -151,6 +161,7 @@ public static class IntelligenceEndpoints
         });
         strategy.MapPost("/kpis/{id:guid}/reading", async (AppDbContext db, HttpContext ctx, Guid id, KpiReadingReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("strategy:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var kpi = await db.Kpis.FirstOrDefaultAsync(k => k.TenantId == req.TenantId && k.Id == id, ct);
@@ -166,6 +177,7 @@ public static class IntelligenceEndpoints
         // --- Search & Analytics ---
         app.MapGet("/api/search", async (AppDbContext db, HttpContext ctx, Guid tenantId, string q, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("search:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
                 return Results.BadRequest(new { error = "q must be at least 2 chars." });
@@ -179,6 +191,7 @@ public static class IntelligenceEndpoints
 
         app.MapGet("/api/analytics/overview", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("analytics:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var totalPeople = await db.People.CountAsync(p => p.TenantId == tenantId, ct);
@@ -208,6 +221,7 @@ public static class IntelligenceEndpoints
         });
         ai.MapPost("/ask", async (AppDbContext db, HttpContext ctx, TenantSearchIndex indexer, AskReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("ai:ask")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Question))
                 return Results.BadRequest(new { error = "Question required." });
@@ -229,6 +243,7 @@ public static class IntelligenceEndpoints
         });
         ai.MapGet("/interactions", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("ai:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             return Results.Ok(await db.AiInteractions.Where(i => i.TenantId == tenantId).OrderByDescending(i => i.At).ToListAsync(ct));
@@ -255,6 +270,7 @@ public static class IntelligenceEndpoints
         });
         integrations.MapGet("/deliveries", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("integration:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             return Results.Ok(await db.IntegrationDeliveries.Where(d => d.TenantId == tenantId).OrderByDescending(d => d.At).ToListAsync(ct));
@@ -264,6 +280,7 @@ public static class IntelligenceEndpoints
         var forms = app.MapGroup("/api/forms").WithTags("Forms").RequireAuthorization();
         forms.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateFormReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("form:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { error = "Code and Name required." });
@@ -289,6 +306,7 @@ public static class IntelligenceEndpoints
         var requests = app.MapGroup("/api/requests").WithTags("Requests").RequireAuthorization();
         requests.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateRequestReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("request:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Title)) return Results.BadRequest(new { error = "Title required." });
             if (!Enum.TryParse<RequestCategory>(req.Category, true, out var cat))
@@ -342,6 +360,7 @@ public static class IntelligenceEndpoints
 
         requests.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, string? status, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("request:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var q = db.Requests.Where(r => r.TenantId == tenantId);
@@ -351,6 +370,7 @@ public static class IntelligenceEndpoints
 
         requests.MapPost("/{id:guid}/submit", async (AppDbContext db, HttpContext ctx, Guid id, SubmitRequestReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("request:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var r = await db.Requests.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
@@ -386,6 +406,7 @@ public static class IntelligenceEndpoints
         var workflows = app.MapGroup("/api/workflows").WithTags("Workflows").RequireAuthorization();
         workflows.MapGet("/instances", async (AppDbContext db, HttpContext ctx, Guid tenantId, string? status, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("workflow:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var q = db.WorkflowInstances.Where(i => i.TenantId == tenantId);
@@ -394,6 +415,7 @@ public static class IntelligenceEndpoints
         });
         workflows.MapPost("/definitions", async (AppDbContext db, HttpContext ctx, CreateWorkflowReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("workflow:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { error = "Code and Name required." });
@@ -437,6 +459,7 @@ public static class IntelligenceEndpoints
         var comms = app.MapGroup("/api/communications").WithTags("Communications").RequireAuthorization();
         comms.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateCommunicationReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("communication:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (!Enum.TryParse<CommunicationKind>(req.Kind, true, out var kind))
                 return Results.BadRequest(new { error = "Kind must be Announcement|Circular|Directive." });
@@ -455,6 +478,7 @@ public static class IntelligenceEndpoints
         });
         comms.MapPost("/{id:guid}/publish", async (AppDbContext db, HttpContext ctx, Guid id, PublishCommunicationReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("communication:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var c = await db.Communications.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
@@ -483,6 +507,7 @@ public static class IntelligenceEndpoints
         var templates = app.MapGroup("/api/notification-templates").WithTags("NotificationTemplates").RequireAuthorization();
         templates.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateNotifTemplateReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("notification:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.BodyTemplate))
                 return Results.BadRequest(new { error = "Code and BodyTemplate required." });
@@ -500,6 +525,7 @@ public static class IntelligenceEndpoints
         });
         templates.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("notification:manage")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             return Results.Ok(await db.NotificationTemplates.Where(t => t.TenantId == tenantId).ToListAsync(ct));
@@ -518,6 +544,7 @@ public static class IntelligenceEndpoints
 
         app.MapGet("/api/notification-receipts", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("notification:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             return Results.Ok(await db.Notifications.Where(n => n.TenantId == tenantId).ToListAsync(ct));
@@ -537,6 +564,7 @@ public static class IntelligenceEndpoints
         });
         approvals.MapGet("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("approval:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
@@ -581,6 +609,7 @@ public static class IntelligenceEndpoints
         });
         approvals.MapPost("/{id:guid}/request-changes", async (AppDbContext db, HttpContext ctx, Guid id, DecideApprovalReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("approval:decide")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
@@ -603,6 +632,7 @@ public static class IntelligenceEndpoints
         });
         approvals.MapPost("/{id:guid}/delegate", async (AppDbContext db, HttpContext ctx, Guid id, DelegateApprovalReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("approval:decide")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var a = await db.Approvals.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
@@ -638,6 +668,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapGet("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
@@ -646,6 +677,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapGet("/{id:guid}/comments", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var list = await db.TaskComments.Where(c => c.TenantId == tenantId && c.TaskId == id).OrderBy(c => c.At).ToListAsync(ct);
@@ -653,6 +685,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapGet("/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var list = await db.TaskEvidences.Where(e => e.TenantId == tenantId && e.TaskId == id).OrderBy(e => e.At).ToListAsync(ct);
@@ -660,6 +693,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapPost("/{id:guid}/complete", async (AppDbContext db, HttpContext ctx, Guid id, CompleteTaskReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var t = await db.WorkTasks.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
@@ -672,6 +706,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapPatch("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, UpdateTaskReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (req.Progress.HasValue && (req.Progress.Value < 0 || req.Progress.Value > 100))
                 return Results.BadRequest(new { error = "Progress must be between 0 and 100." });
@@ -691,6 +726,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapPost("/{id:guid}/comments", async (AppDbContext db, HttpContext ctx, Guid id, AddTaskCommentReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var comment = new TaskComment(Guid.NewGuid(), req.TenantId, id, req.AuthorId, req.Text.Trim(), DateTimeOffset.UtcNow);
@@ -701,6 +737,7 @@ public static class IntelligenceEndpoints
         });
         tasks.MapPost("/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, Guid id, AddTaskEvidenceReq req, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var ev = new TaskEvidence(Guid.NewGuid(), req.TenantId, id, req.UploadedBy, req.ObjectKey, req.FileName, DateTimeOffset.UtcNow);
@@ -797,6 +834,7 @@ public static class IntelligenceEndpoints
         var sla = app.MapGroup("/api/sla").WithTags("SLA").RequireAuthorization();
         sla.MapGet("/breaches", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("approval:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var now = DateTimeOffset.UtcNow;
@@ -807,6 +845,7 @@ public static class IntelligenceEndpoints
 
         app.MapGet("/api/inbox", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid personId, string? filter, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("inbox:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var tasks = await db.WorkTasks.Where(t => t.TenantId == tenantId && t.AssigneeId == personId && t.Status != WorkTaskStatus.Done).ToListAsync(ct);
@@ -818,6 +857,7 @@ public static class IntelligenceEndpoints
 
         app.MapGet("/api/my-work", async (AppDbContext db, HttpContext ctx, Guid tenantId, Guid personId, CancellationToken ct) =>
         {
+            if (!ctx.User.HasPermission("inbox:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var myApprovals = await db.Approvals.Where(a => a.TenantId == tenantId && a.AssigneeId == personId && a.Status == ApprovalStatus.Pending).ToListAsync(ct);

@@ -46,6 +46,29 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Endpoints_WithoutModulePermission_403()
+    {
+        var client = factory.CreateClient();
+        var tenantId = Guid.NewGuid();
+        Auth(client, Mint(tenantId)); // AllPerms only: no request/workflow/inbox/quality/... codes
+        var qs = $"tenantId={tenantId}&personId={Guid.NewGuid()}&q=x";
+        string[] gets =
+        [
+            "/api/requests", "/api/workflows/instances", "/api/inbox", "/api/my-work", "/api/search",
+            "/api/quality/standards", "/api/strategy/plans", "/api/notification-templates",
+            "/api/sla/breaches", "/api/document-workspaces",
+        ];
+        foreach (var path in gets)
+        {
+            var res = await client.GetAsync($"{path}?{qs}");
+            Assert.True(res.StatusCode == HttpStatusCode.Forbidden, $"GET {path} → {(int)res.StatusCode}");
+        }
+        var create = await client.PostAsJsonAsync("/api/requests",
+            new { tenantId, category = "IT", title = "No permission", formId = (Guid?)null, submitterId = Guid.NewGuid(), dataJson = (string?)null });
+        Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+    }
+
+    [Fact]
     public async Task Tenant_DuplicateSlug_409()
     {
         var client = factory.CreateClient();
