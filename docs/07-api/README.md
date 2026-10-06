@@ -135,3 +135,12 @@ Delegation needs a deputy in the same tenant other than yourself. Dev tokens acc
 - `GET /api/workflows/definitions`, `GET /api/workflows/definitions/{id}`, `GET /api/workflows/instances/{id}` (+ approvals) (`workflow:read`)
 - `GET /api/approvals/{id}/history` (`approval:read`) · `GET /api/audit/entities/{type}/{id}` (`audit:read`)
 - `POST /api/notifications/{id}/read` (`notification:read`; only the recipient, via the token's person)
+
+## R0.1 wave A (BBP §7.2, no schema change)
+- `GET /api/auth/me` (subject, tenant, permissions, resolved person) · `GET /api/permissions` (`role:read`, full catalog)
+- `PATCH /api/people/{id}` (`person:update`) · `GET /api/people/{id}/direct-reports` (members of units the person leads)
+- `POST /api/tasks` (`task:create`, manual task) · `POST /api/tasks/{id}/verify` (`task:verify`; Done → Verified; never by the assignee)
+- `GET /api/approvals/submitted` (`approval:read`; approvals on requests/correspondence the caller submitted)
+- `GET /api/inbox/counts` (`inbox:read`; approvals, open/overdue tasks, unread notifications, activities for the caller)
+- `GET /api/sla/compliance?from=&to=` (`approval:read`; on-time vs late decisions, pending overdue, breached tasks)
+- `POST /api/communications/{id}/archive` (`communication:create`; Published/Draft → Archived)

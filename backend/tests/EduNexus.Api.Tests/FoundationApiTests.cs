@@ -158,6 +158,89 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public void PermissionCatalog_Covers_Every_Enforced_Code()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "backend", "src"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var codes = Directory.EnumerateFiles(Path.Combine(dir!.FullName, "backend", "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(f), "HasPermission\\(\"([a-z_]+:[a-z_]+)\"\\)"))
+            .Select(m => m.Groups[1].Value).Distinct().ToList();
+        Assert.NotEmpty(codes);
+        var missing = codes.Except(EduNexus.Api.Auth.PermissionCatalog.All).ToList();
+        Assert.True(missing.Count == 0, "Missing from PermissionCatalog: " + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public async Task WaveA_Me_Tasks_Verify_Submitted_Counts_Sla_Archive()
+    {
+        var perms = AllPerms.Concat(["person:update", "task:create", "task:read", "task:update", "task:verify",
+            "request:create", "request:read", "approval:read", "approval:decide", "inbox:read",
+            "communication:create", "communication:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Wave A Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        async Task<Guid> MkPerson(string name) => IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var lead = await MkPerson("Lina Lead");
+        var worker = await MkPerson("Walid Worker");
+
+        // me + permission catalog
+        var me = await ClientAs(tenant, perms, worker).GetFromJsonAsync<JsonElement>("/api/auth/me");
+        Assert.Equal(worker, me.GetProperty("person").GetProperty("id").GetGuid());
+        Assert.Contains("task:verify", (await client.GetFromJsonAsync<string[]>("/api/permissions"))!);
+
+        // directory: patch + direct reports through the unit the lead leads
+        var unit = IdOf(await (await client.PostAsJsonAsync("/api/organizational-units",
+            new { tenantId = tenant, code = Uid("U"), name = "Registry", leaderPersonId = lead })).Content.ReadFromJsonAsync<JsonElement>());
+        var patch = await client.PatchAsJsonAsync($"/api/people/{worker}",
+            new { tenantId = tenant, departmentId = unit, academicRank = "Lecturer", email = "walid@uni.test" });
+        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+        var reports = await client.GetFromJsonAsync<JsonElement>($"/api/people/{lead}/direct-reports?tenantId={tenant}");
+        Assert.Equal(worker, IdOf(reports[0]));
+
+        // manual task → complete → verify (not by the assignee) → counts
+        var task = await client.PostAsJsonAsync("/api/tasks", new { tenantId = tenant, title = "Prepare report", assigneeId = worker,
+            dueAt = DateTimeOffset.UtcNow.AddDays(2), description = "Q3", priority = "High" });
+        Assert.Equal(HttpStatusCode.Created, task.StatusCode);
+        var taskId = IdOf(await task.Content.ReadFromJsonAsync<JsonElement>());
+        var workerClient = ClientAs(tenant, perms, worker);
+        Assert.Equal(1, (await workerClient.GetFromJsonAsync<JsonElement>($"/api/inbox/counts?tenantId={tenant}")).GetProperty("tasks").GetInt32());
+        var early = await ClientAs(tenant, perms, lead).PostAsJsonAsync($"/api/tasks/{taskId}/verify", new { tenantId = tenant, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.Conflict, early.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/tasks/{taskId}/complete", new { tenantId = tenant })).StatusCode);
+        var selfVerify = await workerClient.PostAsJsonAsync($"/api/tasks/{taskId}/verify", new { tenantId = tenant, comment = (string?)null });
+        Assert.Equal(HttpStatusCode.Forbidden, selfVerify.StatusCode);
+        var verify = await ClientAs(tenant, perms, lead).PostAsJsonAsync($"/api/tasks/{taskId}/verify", new { tenantId = tenant, comment = "Checked" });
+        Assert.Equal("Verified", (await verify.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        Assert.Equal(0, (await workerClient.GetFromJsonAsync<JsonElement>($"/api/inbox/counts?tenantId={tenant}")).GetProperty("tasks").GetInt32());
+
+        // submitted-by-me: worker submits a request reviewed by the lead, lead decides on time → SLA 100%
+        var req = IdOf(await (await client.PostAsJsonAsync("/api/requests", new { tenantId = tenant, category = "IT", title = "Laptop",
+            submitterId = worker, formId = (Guid?)null, dataJson = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var sub = await client.PostAsJsonAsync($"/api/requests/{req}/submit", new { tenantId = tenant, reviewerId = lead, workflowCode = (string?)null });
+        var approvalId = (await sub.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var mine = await workerClient.GetFromJsonAsync<JsonElement>($"/api/approvals/submitted?tenantId={tenant}");
+        Assert.Equal(approvalId, IdOf(mine[0]));
+        Assert.Equal(0, (await ClientAs(tenant, perms, lead).GetFromJsonAsync<JsonElement>($"/api/approvals/submitted?tenantId={tenant}")).GetArrayLength());
+        Assert.Equal(HttpStatusCode.OK, (await ClientAs(tenant, perms, lead).PostAsJsonAsync($"/api/approvals/{approvalId}/decide",
+            new { tenantId = tenant, approve = true, comment = (string?)null })).StatusCode);
+        var sla = await client.GetFromJsonAsync<JsonElement>($"/api/sla/compliance?tenantId={tenant}");
+        Assert.Equal(1, sla.GetProperty("decided").GetInt32());
+        Assert.Equal(100.0, sla.GetProperty("compliancePct").GetDouble());
+
+        // archive a communication once
+        var comm = IdOf(await (await client.PostAsJsonAsync("/api/communications", new { tenantId = tenant, kind = "Announcement",
+            title = "Holiday", body = "Closed Sunday", authorId = lead, requiresAction = false, dueAt = (DateTimeOffset?)null,
+            targetPersonIds = new[] { worker } })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/communications/{comm}/archive", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/communications/{comm}/archive", new { tenantId = tenant })).StatusCode);
+    }
+
+    [Fact]
     public async Task Tenant_DuplicateSlug_409()
     {
         var client = factory.CreateClient();

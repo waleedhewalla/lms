@@ -138,7 +138,7 @@ public sealed record Approval(
     Guid AssigneeId, ApprovalStatus Status, ApprovalPriority Priority,
     DateTimeOffset DueAt, DateTimeOffset? DecidedAt, Guid? DecidedBy, string? Comment);
 
-public enum WorkTaskStatus { Open, InProgress, Done, Breached }
+public enum WorkTaskStatus { Open, InProgress, Done, Breached, Verified }
 public enum WorkTaskPriority { Low, Normal, High, Urgent }
 
 public sealed record WorkTask(
@@ -314,7 +314,7 @@ public sealed record WorkflowInstance(
 // ============================ R0.1 Tracks C+D — Communications, Inbox, My Work ============================
 
 public enum CommunicationKind { Announcement, Circular, Directive }
-public enum CommunicationStatus { Draft, Published }
+public enum CommunicationStatus { Draft, Published, Archived }
 
 public sealed record Communication(
     Guid Id, Guid TenantId, CommunicationKind Kind, string Title, string Body,
