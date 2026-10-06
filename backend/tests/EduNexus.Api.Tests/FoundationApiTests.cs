@@ -241,6 +241,62 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task WaveB_Dashboards_Reports_And_Csv_Export()
+    {
+        var perms = AllPerms.Concat(["analytics:read", "request:create", "request:read", "approval:read", "approval:decide",
+            "task:read", "inbox:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Wave B Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+        async Task<Guid> MkPerson(string name) => IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var reviewer = await MkPerson("Rami Reviewer");
+        var staff = await MkPerson("Sami Staff");
+
+        async Task<Guid> SubmitRequest(string title)
+        {
+            var id = IdOf(await (await client.PostAsJsonAsync("/api/requests", new { tenantId = tenant, category = "Finance", title,
+                submitterId = staff, formId = (Guid?)null, dataJson = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+            var sub = await client.PostAsJsonAsync($"/api/requests/{id}/submit", new { tenantId = tenant, reviewerId = reviewer, workflowCode = (string?)null });
+            return (await sub.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        }
+        var a1 = await SubmitRequest("Budget A");
+        await SubmitRequest("Budget B");
+        var reviewerClient = ClientAs(tenant, perms, reviewer);
+        Assert.Equal(HttpStatusCode.OK, (await reviewerClient.PostAsJsonAsync($"/api/approvals/{a1}/decide",
+            new { tenantId = tenant, approve = true, comment = (string?)null })).StatusCode);
+
+        var exec = await client.GetFromJsonAsync<JsonElement>($"/api/dashboards/executive?tenantId={tenant}");
+        Assert.Equal(1, exec.GetProperty("approvals").GetProperty("pending").GetInt32());
+        Assert.Equal(100.0, exec.GetProperty("approvals").GetProperty("slaCompliancePct30d").GetDouble());
+        Assert.Equal(0, (await client.GetFromJsonAsync<JsonElement>($"/api/dashboards/governance?tenantId={tenant}")).GetProperty("committees").GetInt32());
+
+        var bottlenecks = await client.GetFromJsonAsync<JsonElement>($"/api/reports/approval-bottlenecks?tenantId={tenant}");
+        Assert.Equal(reviewer, bottlenecks[0].GetProperty("assigneeId").GetGuid());
+        Assert.Equal(1, bottlenecks[0].GetProperty("pending").GetInt32());
+        var cycle = await client.GetFromJsonAsync<JsonElement>($"/api/reports/workflow-cycle-time?tenantId={tenant}");
+        Assert.Equal("Finance", cycle[0].GetProperty("category").GetString());
+        Assert.Equal(1, cycle[0].GetProperty("requests").GetInt32());
+        var sla = await client.GetFromJsonAsync<JsonElement>($"/api/reports/sla-compliance?tenantId={tenant}");
+        Assert.Equal("Request", sla.GetProperty("byEntityType")[0].GetProperty("entityType").GetString());
+        var mine = await reviewerClient.GetFromJsonAsync<JsonElement>($"/api/reports/my-performance?tenantId={tenant}");
+        Assert.Equal(1, mine.GetProperty("approvalsDecided").GetInt32());
+        Assert.Equal(1, mine.GetProperty("pendingApprovals").GetInt32());
+
+        var csv = await client.GetAsync($"/api/reports/approval-bottlenecks/export?tenantId={tenant}");
+        Assert.Equal(HttpStatusCode.OK, csv.StatusCode);
+        Assert.Equal("text/csv", csv.Content.Headers.ContentType!.MediaType);
+        var text = await csv.Content.ReadAsStringAsync();
+        Assert.Contains("assigneeId,assignee,pending,overdue,oldestDueAt", text);
+        Assert.Contains("Rami Reviewer", text);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/reports/nope?tenantId={tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await ClientAs(tenant, ["inbox:read"], staff).GetAsync($"/api/dashboards/executive?tenantId={tenant}")).StatusCode);
+    }
+
+    [Fact]
     public async Task Tenant_DuplicateSlug_409()
     {
         var client = factory.CreateClient();

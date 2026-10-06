@@ -144,3 +144,10 @@ Delegation needs a deputy in the same tenant other than yourself. Dev tokens acc
 - `GET /api/inbox/counts` (`inbox:read`; approvals, open/overdue tasks, unread notifications, activities for the caller)
 - `GET /api/sla/compliance?from=&to=` (`approval:read`; on-time vs late decisions, pending overdue, breached tasks)
 - `POST /api/communications/{id}/archive` (`communication:create`; Published/Draft → Archived)
+
+## Wave B — Reports & dashboards (BBP §7.2, computed, `analytics:read`)
+- `GET /api/dashboards/executive` (requests by status, approvals pending/overdue/SLA 30d, tasks, communications, governance KPIs)
+- `GET /api/dashboards/department/{orgUnitId}` (unit members' approvals/tasks/requests) · `GET /api/dashboards/governance`
+- `GET /api/reports/my-performance` (caller; also allowed with `inbox:read`) · `GET /api/reports/sla-compliance?from=&to=` (by entity type)
+- Tabular: `GET /api/reports/{code}` and `GET /api/reports/{code}/export` (CSV, UTF-8 BOM, formula-safe) for
+  `approval-bottlenecks`, `workflow-cycle-time`, `committees`, `decisions`, `policies`
