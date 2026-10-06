@@ -6,6 +6,7 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
   const { t } = useTranslation();
   const [token, setToken] = useState("");
   const [status, setStatus] = useState("");
+  const [personId, setPersonId] = useState("");
   
   async function mint() {
     setStatus("…");
@@ -16,7 +17,8 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
         body: JSON.stringify({
           subject: "web-admin",
           tenantId,
-          permissions: ["tenant:read", "org:read", "person:read", "person:create", "role:create", "role:assign", "role:read", "audit:read", "correspondence:create", "correspondence:read", "correspondence:confidential", "approval:read", "approval:decide", "task:read", "task:update", "notification:read", "committee:create", "committee:read", "meeting:create", "meeting:read", "decision:create", "decision:read", "action:update", "policy:create", "policy:read", "policy:ack", "document:create", "document:read", "search:read", "analytics:read", "quality:manage", "strategy:manage", "ai:manage", "ai:ask", "ai:read", "integration:manage", "integration:read", "inbox:read", "quality:read", "strategy:read", "communication:create", "notification:manage", "form:manage", "request:create", "request:read", "workflow:manage", "workflow:read", "document:update", "document:manage"],
+          personId: personId.trim() || null,
+          permissions: ["tenant:read", "org:read", "person:read", "person:create", "role:create", "role:assign", "role:read", "audit:read", "correspondence:create", "correspondence:read", "correspondence:confidential", "approval:read", "approval:decide", "task:read", "task:update", "notification:read", "committee:create", "committee:read", "meeting:create", "meeting:read", "decision:create", "decision:read", "action:update", "policy:create", "policy:read", "policy:ack", "document:create", "document:read", "search:read", "analytics:read", "quality:manage", "strategy:manage", "ai:manage", "ai:ask", "ai:read", "integration:manage", "integration:read", "inbox:read", "quality:read", "strategy:read", "communication:create", "notification:manage", "form:manage", "request:create", "request:read", "workflow:manage", "workflow:read", "document:update", "document:manage", "chatter:read", "chatter:write", "activity:read", "activity:write"],
         }),
       });
       if (!res.ok) throw new Error(`dev-token → ${res.status} (API must run in Development)`);
@@ -42,6 +44,15 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
             value={tenantId} 
             onChange={(e) => setTenantId(e.target.value)} 
             placeholder={t("conn.placeholder")}
+          />
+        </div>
+        <div className="form-group" style={{ flex: 1, minWidth: '300px', margin: 0 }}>
+          <label>{t("conn.person")}</label>
+          <input
+            className="input"
+            value={personId}
+            onChange={(e) => setPersonId(e.target.value)}
+            placeholder={t("conn.personPlaceholder")}
           />
         </div>
         <button className="btn" onClick={mint}>{t("conn.btn")}</button>

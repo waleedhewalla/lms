@@ -12,6 +12,8 @@ This runbook documents the configuration patterns for integrating EduNexus OS V2
 | `aud` | String | Audience identifier | Must match `Auth:Audience` (e.g. `edunexus-api`) |
 | `tenant_id` | String (GUID) | Tenant Isolation GUID | Protocol mapper set to tenant UUID |
 | `permission` | Array of Strings | Granted permission strings | `role:read`, `person:create`, `document:create`, etc. |
+| `person_id` | String (GUID), optional | The directory `Person` the user acts as (approvals, delegation) | User attribute mapper; if absent the API matches `email` to `Person.Email` |
+| `email` | String | Fallback for resolving the acting person (must be unique in the tenant) | Standard `email` scope |
 
 ---
 

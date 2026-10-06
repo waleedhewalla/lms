@@ -54,6 +54,8 @@ export const translations = {
     "conn.title": "🔑 Connection (dev)",
     "conn.tenant": "Tenant ID",
     "conn.placeholder": "e.g. b17a1593-1383-4ee1-b9cd-0ab75586bb2e",
+    "conn.person": "Act as person ID (needed to approve)",
+    "conn.personPlaceholder": "Person GUID from Directory",
     "conn.btn": "Mint Dev Token",
 
     // Directory
@@ -193,6 +195,8 @@ export const translations = {
     "conn.title": "🔑 الاتصال (للمطورين)",
     "conn.tenant": "معرف المستأجر (Tenant ID)",
     "conn.placeholder": "مثل b17a1593-1383-4ee1-b9cd-0ab75586bb2e",
+    "conn.person": "التصرف بصفة الشخص (مطلوب للاعتماد)",
+    "conn.personPlaceholder": "معرّف الشخص من الدليل",
     "conn.btn": "إنشاء رمز مطور",
 
     // Directory

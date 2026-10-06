@@ -116,4 +116,11 @@ SIS/HR/Finance/ERP bi-di API+events; Teams Graph; Email SMTP/API in+out; SMS out
 - Communications `communication:create` (create, publish) · Notification templates `notification:manage` · receipts `notification:read`
 - Approvals: detail `approval:read`; request-changes/delegate `approval:decide` · SLA breaches `approval:read`
 - Tasks: detail/comments/evidence `task:read`; complete/patch/comment/evidence `task:update` · Inbox and My Work `inbox:read`
-- Not yet gated: `/api/chatter/*` and `/api/activities/*` (no codes defined yet)
+- Chatter: comments/followers `chatter:read`, comment/follow `chatter:write` · Activities: `/my` `activity:read`, schedule/complete `activity:write`
+
+## Acting person (who decides)
+Approval decide, request-changes and delegate act as the **token's person**, resolved server-side:
+the `person_id` claim, else the single person in the tenant whose email equals the `email` claim.
+A token with no resolvable person gets 403. A body `decidedBy`/`delegatedBy` that names anyone
+else is refused with 403. The approval must be assigned to that person and still Pending (else 409).
+Delegation needs a deputy in the same tenant other than yourself. Dev tokens accept an optional `personId`.
