@@ -383,13 +383,14 @@ public static class GovernanceEndpoints
             var p = await db.Policies.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (p is null) return Results.NotFound(new { error = "Policy not found." });
             if (p.Status != PolicyStatus.Published) return Results.Conflict(new { error = "Cannot acknowledge unpublished policy." });
-            if (!await db.People.AnyAsync(x => x.TenantId == req.TenantId && x.Id == req.PersonId, ct))
-                return Results.NotFound(new { error = "Person not found in tenant." });
-            var ack = new PolicyAcknowledgement(Guid.NewGuid(), req.TenantId, id, req.PersonId, DateTimeOffset.UtcNow);
+            // People acknowledge for themselves only: the person comes from the token, never the body.
+            var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
+            if (actor is null || (req.PersonId is { } claimed && claimed != actor)) return Results.Forbid();
+            var ack = new PolicyAcknowledgement(Guid.NewGuid(), req.TenantId, id, actor.Value, DateTimeOffset.UtcNow);
             db.PolicyAcknowledgements.Add(ack);
             DomainEvents.Record(db, req.TenantId, "PolicyAcknowledged", "PolicyAcknowledged",
                 nameof(Policy), id.ToString(),
-                payload: new { tenantId = req.TenantId, policyId = id, personId = req.PersonId }, details: req.PersonId.ToString());
+                payload: new { tenantId = req.TenantId, policyId = id, personId = actor }, actorId: actor, details: actor.ToString());
             try { await db.SaveChangesAsync(ct); }
             catch (DbUpdateException ex) when (IsUniqueConflict(ex))
             {

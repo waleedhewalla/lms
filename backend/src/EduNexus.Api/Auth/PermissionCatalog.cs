@@ -8,12 +8,13 @@ public static class PermissionCatalog
 {
     public static readonly string[] All =
     [
-        "action:update",
+        "action:update", "action:verify",
         "activity:read", "activity:write",
         "ai:admin", "ai:ask", "ai:manage", "ai:read", "ai:write",
         "analytics:read",
         "approval:decide", "approval:read",
         "audit:read",
+        "calendar:manage", "calendar:read",
         "chatter:read", "chatter:write",
         "committee:create", "committee:read",
         "communication:create", "communication:read",
@@ -24,6 +25,7 @@ public static class PermissionCatalog
         "inbox:read",
         "integration:admin", "integration:manage", "integration:read", "integration:write",
         "meeting:create", "meeting:read", "meeting:update",
+        "minutes:approve",
         "notification:manage", "notification:read",
         "org:create", "org:read",
         "person:create", "person:read", "person:update",
@@ -32,6 +34,7 @@ public static class PermissionCatalog
         "request:create", "request:read",
         "role:assign", "role:create", "role:read",
         "search:read",
+        "sla:manage",
         "strategy:manage", "strategy:read",
         "task:create", "task:read", "task:update", "task:verify",
         "tenant:create", "tenant:read",

@@ -151,3 +151,24 @@ Delegation needs a deputy in the same tenant other than yourself. Dev tokens acc
 - `GET /api/reports/my-performance` (caller; also allowed with `inbox:read`) · `GET /api/reports/sla-compliance?from=&to=` (by entity type)
 - Tabular: `GET /api/reports/{code}` and `GET /api/reports/{code}/export` (CSV, UTF-8 BOM, formula-safe) for
   `approval-bottlenecks`, `workflow-cycle-time`, `committees`, `decisions`, `policies`
+
+## Wave C — R0.2 governance depth (migration `R15GovernanceDepth`, RLS on all new tables)
+- Calendar (`calendar:read|manage`): `GET/POST /api/calendar/events`, `PATCH/DELETE /api/calendar/events/{id}`, `GET /api/calendar/export.ics`.
+  The feed merges stored events with meetings, policy reviews and open decision-action deadlines.
+- Committees: `GET/PATCH /api/committees/{id}`, `GET /api/committees/{id}/members`, `DELETE /api/committees/{id}/members/{memberId}`,
+  `POST /api/committees/{id}/members/{memberId}/term`
+- Meetings: `PATCH /api/meetings/{id}` (Scheduled only; `cancel`), `GET /api/meetings/{id}/agenda`, `POST /api/meetings/{id}/agenda-items`,
+  `PATCH /api/agenda-items/{id}`, `POST /api/meetings/{id}/check-in` (committee members, as the token's person),
+  `GET/POST /api/meetings/{id}/minutes` (versioned; `submit`), `POST /api/minutes/{id}/approve` (`minutes:approve`, not the author)
+- Decisions: `GET /api/decisions/{id}` (+ actions, evidence, implementation %), `GET /api/decisions/overdue`,
+  `POST /api/decisions/{id}/transition` (Published→Implemented→Verified→Closed, gated on action state),
+  `POST /api/decision-actions/{id}/evidence` (assignee), `POST /api/decision-actions/{id}/verify` (`action:verify`, not the assignee, evidence required)
+- Policies: `GET /api/policies/{id}` (+ versions, ack count, procedures), `POST /api/policies/{id}/versions` (snapshot + bump, back to Draft),
+  `POST /api/policies/{id}/transition` (Draft→Review→LegalReview→Approval→Published; Published→Review), `POST /api/policies/{id}/retire`,
+  `POST /api/policies/{id}/review-schedule`, `GET /api/policies/{id}/acknowledgements`, `GET /api/policies/reviews/upcoming?days=`;
+  `POST /api/policies/{id}/acknowledge` now acknowledges for the token's person only
+- Procedures: `GET/POST /api/procedures`, `GET /api/procedures/{id}`
+- Notification preferences (self): `GET/PUT /api/notifications/preferences` — honoured by the notification consumer
+  (in-app and Emergency always delivered; disabled/min-priority/quiet hours apply to other channels)
+- SLA policies: `GET /api/sla/policies` (`approval:read`), `POST /api/sla/policies` (`sla:manage`, upsert per entity type);
+  request reviews take their due date from the `Request` policy
