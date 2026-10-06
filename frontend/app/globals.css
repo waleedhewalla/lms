@@ -290,3 +290,10 @@ a:hover {
   font-weight: 600;
   margin-bottom: 1rem;
 }
+
+/* Compact buttons inside data tables so row actions wrap instead of clipping. */
+td .btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
