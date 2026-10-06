@@ -124,3 +124,14 @@ the `person_id` claim, else the single person in the tenant whose email equals t
 A token with no resolvable person gets 403. A body `decidedBy`/`delegatedBy` that names anyone
 else is refused with 403. The approval must be assigned to that person and still Pending (else 409).
 Delegation needs a deputy in the same tenant other than yourself. Dev tokens accept an optional `personId`.
+
+## R0.1 read & detail endpoints (BBP §7.2, no schema change)
+- `GET /api/people/{id}` (`person:read`) · `GET /api/organizational-units/{id}/subtree` (`org:read`, unit + all descendants)
+- `GET /api/correspondence/{id}` (`correspondence:read`; confidential needs `correspondence:confidential`, else 404) — with correspondents and approvals
+- `GET /api/communications?kind=&status=`, `GET /api/communications/{id}` (+ recipientCount), `GET /api/communications/{id}/recipients` (`communication:read`)
+- `GET /api/requests/categories`, `GET /api/requests/{id}` (+ submissions, approvals, workflow) (`request:read`)
+- `POST /api/requests/{id}/cancel` (`request:create`; acting person must be the submitter; Draft/ChangesRequested → Closed; `RequestCancelled`)
+- `GET /api/forms?category=`, `GET /api/forms/{id}`, `POST /api/forms/{id}/validate` → `{ valid, errors[] }` (`form:read`)
+- `GET /api/workflows/definitions`, `GET /api/workflows/definitions/{id}`, `GET /api/workflows/instances/{id}` (+ approvals) (`workflow:read`)
+- `GET /api/approvals/{id}/history` (`approval:read`) · `GET /api/audit/entities/{type}/{id}` (`audit:read`)
+- `POST /api/notifications/{id}/read` (`notification:read`; only the recipient, via the token's person)

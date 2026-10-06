@@ -77,6 +77,87 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Read_Endpoints_Detail_Validate_Cancel_And_Audit()
+    {
+        var perms = AllPerms.Concat(["form:manage", "form:read", "request:create", "request:read",
+            "workflow:manage", "workflow:read", "communication:read", "approval:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Read Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        async Task<Guid> MkPerson(string name) => IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = name, email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var submitter = await MkPerson("Sara Submitter");
+        var other = await MkPerson("Omar Other");
+
+        // person detail + unit subtree (root → child → grandchild, sibling excluded)
+        var person = await client.GetFromJsonAsync<JsonElement>($"/api/people/{submitter}?tenantId={tenant}");
+        Assert.Equal("Sara Submitter", person.GetProperty("fullName").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/people/{Guid.NewGuid()}?tenantId={tenant}")).StatusCode);
+        async Task<Guid> MkUnit(string code, Guid? parent) => IdOf(await (await client.PostAsJsonAsync("/api/organizational-units",
+            new { tenantId = tenant, code, name = code, parentId = parent })).Content.ReadFromJsonAsync<JsonElement>());
+        var root = await MkUnit(Uid("U"), null);
+        var child = await MkUnit(Uid("U"), root);
+        await MkUnit(Uid("U"), child);
+        await MkUnit(Uid("U"), null);
+        var subtree = await client.GetFromJsonAsync<JsonElement>($"/api/organizational-units/{root}/subtree?tenantId={tenant}");
+        Assert.Equal(3, subtree.GetArrayLength());
+
+        // forms list/detail/validate
+        var schema = """[{"key":"reason","label":"Reason","type":"text","required":true}]""";
+        var form = IdOf(await (await client.PostAsJsonAsync("/api/forms",
+            new { tenantId = tenant, code = Uid("F"), name = "Leave", category = "HR", schemaJson = schema })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(1, (await client.GetFromJsonAsync<JsonElement>($"/api/forms?tenantId={tenant}&category=HR")).GetArrayLength());
+        Assert.Equal(form, IdOf(await client.GetFromJsonAsync<JsonElement>($"/api/forms/{form}?tenantId={tenant}")));
+        var invalid = await (await client.PostAsJsonAsync($"/api/forms/{form}/validate",
+            new { tenantId = tenant, dataJson = "{}" })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(invalid.GetProperty("valid").GetBoolean());
+        Assert.Equal("reason", invalid.GetProperty("errors")[0].GetString());
+        var valid = await (await client.PostAsJsonAsync($"/api/forms/{form}/validate",
+            new { tenantId = tenant, dataJson = """{"reason":"Conference"}""" })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(valid.GetProperty("valid").GetBoolean());
+        var badJson = await client.PostAsJsonAsync($"/api/forms/{form}/validate", new { tenantId = tenant, dataJson = "{oops" });
+        Assert.Equal(HttpStatusCode.BadRequest, badJson.StatusCode);
+
+        // request detail, categories, cancel (submitter only, Draft only)
+        Assert.Contains("HR", (await client.GetFromJsonAsync<string[]>("/api/requests/categories"))!);
+        var reqId = IdOf(await (await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant, category = "HR", title = "Leave request", submitterId = submitter,
+            formId = form, dataJson = """{"reason":"Conference"}""",
+        })).Content.ReadFromJsonAsync<JsonElement>());
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/requests/{reqId}?tenantId={tenant}");
+        Assert.Equal("Draft", detail.GetProperty("request").GetProperty("status").GetString());
+        Assert.Equal(1, detail.GetProperty("submissions").GetArrayLength());
+        var notMine = await ClientAs(tenant, perms, other).PostAsJsonAsync($"/api/requests/{reqId}/cancel",
+            new { tenantId = tenant, reason = "not mine" });
+        Assert.Equal(HttpStatusCode.Forbidden, notMine.StatusCode);
+        var submitterClient = ClientAs(tenant, perms, submitter);
+        var cancel = await submitterClient.PostAsJsonAsync($"/api/requests/{reqId}/cancel", new { tenantId = tenant, reason = "Plans changed" });
+        Assert.Equal(HttpStatusCode.OK, cancel.StatusCode);
+        Assert.Equal("Closed", (await cancel.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        var again = await submitterClient.PostAsJsonAsync($"/api/requests/{reqId}/cancel", new { tenantId = tenant, reason = (string?)null });
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+
+        // per-entity audit trail has create + cancel
+        var trail = await client.GetFromJsonAsync<JsonElement>($"/api/audit/entities/Request/{reqId}?tenantId={tenant}");
+        var actions = trail.EnumerateArray().Select(e => e.GetProperty("action").GetString()).ToList();
+        Assert.Contains("RequestCreated", actions);
+        Assert.Contains("RequestCancelled", actions);
+
+        // workflow definitions list/detail; communications list (empty) works
+        var nodes = """[{"id":"start","type":"start"},{"id":"end","type":"end"}]""";
+        var wf = IdOf(await (await client.PostAsJsonAsync("/api/workflows/definitions",
+            new { tenantId = tenant, code = Uid("WF"), name = "Trivial", nodesJson = nodes })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(1, (await client.GetFromJsonAsync<JsonElement>($"/api/workflows/definitions?tenantId={tenant}")).GetArrayLength());
+        Assert.Equal(wf, IdOf(await client.GetFromJsonAsync<JsonElement>($"/api/workflows/definitions/{wf}?tenantId={tenant}")));
+        Assert.Equal(0, (await client.GetFromJsonAsync<JsonElement>($"/api/communications?tenantId={tenant}")).GetArrayLength());
+    }
+
+    [Fact]
     public async Task Tenant_DuplicateSlug_409()
     {
         var client = factory.CreateClient();
