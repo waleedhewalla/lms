@@ -903,7 +903,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(1, shares.GetArrayLength());
 
         // Classify and set retention
-        var update = await client.PatchAsJsonAsync($"/api/documents/{docId}?tenantId={tenant}", new { classification = "Confidential", retainUntil = DateTimeOffset.UtcNow.AddYears(7) });
+        var update = await client.PatchAsJsonAsync($"/api/documents/{docId}?tenantId={tenant}", new { tenantId = tenant, classification = "Confidential", retainUntil = DateTimeOffset.UtcNow.AddYears(7) });
         Assert.Equal(HttpStatusCode.OK, update.StatusCode);
         var updated = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}?tenantId={tenant}");
         Assert.Equal("Confidential", updated.GetProperty("classification").GetString());
@@ -913,4 +913,640 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var sharesList = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}/shares?tenantId={tenant}");
         Assert.Equal(1, sharesList.GetArrayLength());
     }
+
+    [Fact]
+    public async Task Chatter_Comment_And_Follow_FullFlow()
+    {
+        var perms = AllPerms.Concat(["correspondence:create", "correspondence:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Chatter Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        var author = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Staff Member", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var corrRes = await client.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant,
+            type = "Internal",
+            subject = "Council Inquiry",
+            content = "Please advise on senate quorum",
+            authorId = author,
+            priority = "Normal",
+            isConfidential = false,
+        });
+        Assert.Equal(HttpStatusCode.Created, corrRes.StatusCode);
+        var corrId = IdOf(await corrRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // 1. Post internal note (staff-only)
+        var internalNote = await client.PostAsJsonAsync("/api/chatter/comments", new
+        {
+            tenantId = tenant,
+            entityType = "Correspondence",
+            entityId = corrId,
+            authorId = author,
+            content = "Note for legal review: check bylaws section 4",
+            isInternalOnly = true,
+        });
+        Assert.Equal(HttpStatusCode.Created, internalNote.StatusCode);
+
+        // 2. Post public message
+        var publicMsg = await client.PostAsJsonAsync("/api/chatter/comments", new
+        {
+            tenantId = tenant,
+            entityType = "Correspondence",
+            entityId = corrId,
+            authorId = author,
+            content = "Quorum requires 50% + 1 active voting members.",
+            isInternalOnly = false,
+        });
+        Assert.Equal(HttpStatusCode.Created, publicMsg.StatusCode);
+
+        // 3. List comments
+        var comments = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/chatter/comments?tenantId={tenant}&entityType=Correspondence&entityId={corrId}");
+        Assert.Equal(2, comments.GetArrayLength());
+        Assert.True(comments[0].GetProperty("isInternalOnly").GetBoolean());
+        Assert.False(comments[1].GetProperty("isInternalOnly").GetBoolean());
+
+        // 4. Follow entity
+        var followRes = await client.PostAsJsonAsync("/api/chatter/follow", new
+        {
+            tenantId = tenant,
+            entityType = "Correspondence",
+            entityId = corrId,
+            personId = author,
+        });
+        Assert.Equal(HttpStatusCode.Created, followRes.StatusCode);
+
+        var followers = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/chatter/followers?tenantId={tenant}&entityType=Correspondence&entityId={corrId}");
+        Assert.Equal(1, followers.GetArrayLength());
+        Assert.Equal(author, followers[0].GetProperty("personId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Activities_Schedule_Complete_And_MyWork_Flow()
+    {
+        var perms = AllPerms.Concat(["correspondence:create", "inbox:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Activity Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        var assignee = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Reviewing Dean", email = (string?)null })).Content.ReadFromJsonAsync<JsonElement>());
+        var fakeEntityId = Guid.NewGuid();
+
+        // 1. Schedule "Review" activity
+        var act1Res = await client.PostAsJsonAsync("/api/activities", new
+        {
+            tenantId = tenant,
+            entityType = "Request",
+            entityId = fakeEntityId,
+            type = "Review",
+            assigneeId = assignee,
+            summary = "Review accreditation syllabus submission",
+            dueDate = DateTimeOffset.UtcNow.AddDays(2),
+        });
+        Assert.Equal(HttpStatusCode.Created, act1Res.StatusCode);
+        var act1Id = IdOf(await act1Res.Content.ReadFromJsonAsync<JsonElement>());
+
+        // 2. Schedule "Sign" activity
+        var act2Res = await client.PostAsJsonAsync("/api/activities", new
+        {
+            tenantId = tenant,
+            entityType = "Request",
+            entityId = fakeEntityId,
+            type = "Sign",
+            assigneeId = assignee,
+            summary = "Countersign faculty agreement",
+            dueDate = DateTimeOffset.UtcNow.AddDays(4),
+        });
+        Assert.Equal(HttpStatusCode.Created, act2Res.StatusCode);
+
+        // 3. Query My Activities
+        var myActs = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/activities/my?tenantId={tenant}&personId={assignee}&completed=false");
+        Assert.Equal(2, myActs.GetArrayLength());
+
+        // 4. Complete first activity
+        var completeRes = await client.PatchAsJsonAsync($"/api/activities/{act1Id}/complete", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.OK, completeRes.StatusCode);
+        Assert.True((await completeRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("isCompleted").GetBoolean());
+
+        // 5. Verify MyWork counter reflects pending activities
+        var myWorkRes = await client.GetFromJsonAsync<JsonElement>($"/api/my-work?tenantId={tenant}&personId={assignee}");
+        Assert.Equal(1, myWorkRes.GetProperty("counts").GetProperty("pendingActivities").GetInt32());
+    }
+
+    [Fact]
+    public async Task Hierarchy_Workflow_SubmitterHead_Resolution()
+    {
+        var perms = AllPerms.Concat(["request:create", "workflow:manage", "workflow:read", "approval:read", "approval:decide"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Hierarchy Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // Create Department Head
+        var deptHead = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Prof. Department Head", email = (string?)null, academicRank = "Professor" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        // Create Organizational Unit with deptHead as LeaderPersonId
+        var unitRes = await client.PostAsJsonAsync("/api/organizational-units", new
+        {
+            tenantId = tenant,
+            code = "CS-DEPT",
+            name = "Computer Science Department",
+            leaderPersonId = deptHead,
+        });
+        Assert.Equal(HttpStatusCode.Created, unitRes.StatusCode);
+        var unitId = IdOf(await unitRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // Create Faculty submitter assigned to this department
+        var faculty = IdOf(await (await client.PostAsJsonAsync("/api/people",
+            new { tenantId = tenant, type = "Employee", fullName = "Dr. Alice Faculty", email = (string?)null, departmentId = unitId, academicRank = "AssistantProfessor" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        // Create Workflow definition with assigneeFrom: "submitter_head"
+        var nodesJson = """
+        [
+          { "id": "start", "type": "start" },
+          { "id": "head_approval", "type": "approval", "assigneeFrom": "submitter_head", "slaDays": 3 },
+          { "id": "end", "type": "end" }
+        ]
+        """;
+        var wfRes = await client.PostAsJsonAsync("/api/workflows/definitions", new
+        {
+            tenantId = tenant,
+            code = "FACULTY_RESEARCH_REQ",
+            name = "Faculty Research Request",
+            nodesJson,
+        });
+        Assert.Equal(HttpStatusCode.Created, wfRes.StatusCode);
+
+        // Submit request triggering workflow
+        var reqRes = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant,
+            category = "Academic",
+            title = "Conference Travel Grant",
+            submitterId = faculty,
+        });
+        Assert.Equal(HttpStatusCode.Created, reqRes.StatusCode);
+        var reqId = IdOf(await reqRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        var submitRes = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit", new
+        {
+            tenantId = tenant,
+            workflowCode = "FACULTY_RESEARCH_REQ",
+        });
+        Assert.Equal(HttpStatusCode.OK, submitRes.StatusCode);
+
+        // Verify the approval was automatically assigned to the Department Head!
+        var approvalId = (await submitRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("approvalId").GetGuid();
+        var approvalDetail = await client.GetFromJsonAsync<JsonElement>($"/api/approvals/{approvalId}?tenantId={tenant}");
+        Assert.Equal(deptHead, approvalDetail.GetProperty("assigneeId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Document_Workspaces_And_Tags_Flow()
+    {
+        var perms = AllPerms.Concat(["document:create", "document:read", "document:write", "document:manage"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Doc Uni 2" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // 1. Create Workspace
+        var wsRes = await client.PostAsJsonAsync("/api/document-workspaces", new
+        {
+            tenantId = tenant,
+            code = "SENATE_PACKETS",
+            name = "University Senate Packets",
+            description = "Official council and senate packets",
+        });
+        Assert.Equal(HttpStatusCode.Created, wsRes.StatusCode);
+
+        var wsList = await client.GetFromJsonAsync<JsonElement>($"/api/document-workspaces?tenantId={tenant}");
+        Assert.True(wsList.GetArrayLength() >= 1);
+
+        // 2. Create Document and Tag it
+        var docRes = await client.PostAsJsonAsync("/api/documents", new { tenantId = tenant, title = "Senate Docket 2026-Q1" });
+        var docId = IdOf(await docRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        var tagRes = await client.PostAsJsonAsync($"/api/documents/{docId}/tags", new
+        {
+            tenantId = tenant,
+            category = "AcademicYear",
+            value = "2026-2027",
+        });
+        Assert.Equal(HttpStatusCode.Created, tagRes.StatusCode);
+
+        var tags = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}/tags?tenantId={tenant}");
+        Assert.Equal(1, tags.GetArrayLength());
+        Assert.Equal("AcademicYear", tags[0].GetProperty("tagCategory").GetString());
+        Assert.Equal("2026-2027", tags[0].GetProperty("tagValue").GetString());
+    }
+
+    [Fact]
+    public async Task Convene_Meeting_Quorum_And_Voting_Flow()
+    {
+        var perms = AllPerms.Concat(["meeting:create", "meeting:read", "committee:create", "decision:create"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Senate Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // Create 3 people for committee
+        var p1 = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "President Alpha" })).Content.ReadFromJsonAsync<JsonElement>());
+        var p2 = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Dean Beta" })).Content.ReadFromJsonAsync<JsonElement>());
+        var p3 = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Dean Gamma" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var comRes = await client.PostAsJsonAsync("/api/committees", new { tenantId = tenant, code = "SENATE", name = "Academic Senate" });
+        var comId = IdOf(await comRes.Content.ReadFromJsonAsync<JsonElement>());
+        await client.PostAsJsonAsync($"/api/committees/{comId}/members", new { tenantId = tenant, personId = p1, role = "Chair" });
+        await client.PostAsJsonAsync($"/api/committees/{comId}/members", new { tenantId = tenant, personId = p2, role = "Member" });
+        await client.PostAsJsonAsync($"/api/committees/{comId}/members", new { tenantId = tenant, personId = p3, role = "Member" });
+
+        var meetingRes = await client.PostAsJsonAsync("/api/meetings", new
+        {
+            tenantId = tenant,
+            committeeId = comId,
+            title = "Academic Senate Session 42",
+            startsAt = DateTimeOffset.UtcNow.AddDays(1),
+            agenda = new[]
+            {
+                new { title = "Approval of New Curriculum", description = "CS 2026 update" }
+            }
+        });
+        var meetingId = IdOf(await meetingRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // Attendance: 2 present, 1 absent -> Quorum (2 of 3) achieved!
+        await client.PostAsJsonAsync($"/api/meetings/{meetingId}/attendance", new { tenantId = tenant, personId = p1, status = "Present" });
+        await client.PostAsJsonAsync($"/api/meetings/{meetingId}/attendance", new { tenantId = tenant, personId = p2, status = "Present" });
+        await client.PostAsJsonAsync($"/api/meetings/{meetingId}/attendance", new { tenantId = tenant, personId = p3, status = "Absent" });
+
+        var quorum = await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meetingId}/quorum?tenantId={tenant}");
+        Assert.Equal(3, quorum.GetProperty("totalMembers").GetInt32());
+        Assert.Equal(2, quorum.GetProperty("presentCount").GetInt32());
+        Assert.True(quorum.GetProperty("hasQuorum").GetBoolean());
+
+        // Get agenda items to vote on
+        var agendaList = await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meetingId}?tenantId={tenant}");
+        // Cast votes
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var agendaItem = await db.AgendaItems.FirstAsync(a => a.MeetingId == meetingId);
+
+        var voteRes1 = await client.PostAsJsonAsync($"/api/meetings/{meetingId}/votes", new
+        {
+            tenantId = tenant,
+            agendaItemId = agendaItem.Id,
+            personId = p1,
+            choice = "InFavor",
+            remarks = "Endorsed with minor amendment"
+        });
+        Assert.Equal(HttpStatusCode.OK, voteRes1.StatusCode);
+
+        var voteRes2 = await client.PostAsJsonAsync($"/api/meetings/{meetingId}/votes", new
+        {
+            tenantId = tenant,
+            agendaItemId = agendaItem.Id,
+            personId = p2,
+            choice = "InFavor"
+        });
+        Assert.Equal(HttpStatusCode.OK, voteRes2.StatusCode);
+
+        var votesSummary = await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meetingId}/votes?tenantId={tenant}");
+        Assert.Equal(2, votesSummary.GetProperty("votes").GetArrayLength());
+        var tallies = votesSummary.GetProperty("tallies");
+        Assert.Equal(1, tallies.GetArrayLength());
+        Assert.Equal(2, tallies[0].GetProperty("inFavor").GetInt32());
+        Assert.Equal(0, tallies[0].GetProperty("against").GetInt32());
+    }
+
+    [Fact]
+    public async Task Odoo_Correspondence_Threading_And_RoutingSlips_Flow()
+    {
+        var perms = AllPerms.Concat(["correspondence:create", "correspondence:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Gov Ministry Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        var minister = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Ministry Liaison" })).Content.ReadFromJsonAsync<JsonElement>());
+        var dean = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Dean of Science" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        // 1. Incoming Letter from Ministry
+        var parentRes = await client.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant,
+            type = "Incoming",
+            subject = "Ministry Inquiry: Annual Lab Safety Compliance",
+            content = "Please provide annual lab safety audit results.",
+            authorId = minister,
+            priority = "High",
+            isConfidential = false
+        });
+        Assert.Equal(HttpStatusCode.Created, parentRes.StatusCode);
+        var parentId = IdOf(await parentRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // 2. Executive appends Routing Slip (Tashira)
+        var slipRes = await client.PostAsJsonAsync($"/api/correspondence/{parentId}/routing-slips", new
+        {
+            tenantId = tenant,
+            fromPersonId = minister,
+            toPersonId = dean,
+            actionRequired = "DraftOfficialReply",
+            instructions = "Compile science college lab inspection reports and prepare response letter.",
+            dueAt = DateTimeOffset.UtcNow.AddDays(5)
+        });
+        Assert.Equal(HttpStatusCode.Created, slipRes.StatusCode);
+        var slipId = IdOf(await slipRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        var slips = await client.GetFromJsonAsync<JsonElement>($"/api/correspondence/{parentId}/routing-slips?tenantId={tenant}");
+        Assert.Equal(1, slips.GetArrayLength());
+        Assert.Equal("DraftOfficialReply", slips[0].GetProperty("actionRequired").GetString());
+
+        // Complete the routing slip
+        var completeRes = await client.PostAsJsonAsync($"/api/correspondence/{parentId}/routing-slips/{slipId}/complete?tenantId={tenant}", new { });
+        Assert.Equal(HttpStatusCode.OK, completeRes.StatusCode);
+
+        // 3. Create Outgoing Response Letter linked to parent
+        var replyRes = await client.PostAsJsonAsync("/api/correspondence", new
+        {
+            tenantId = tenant,
+            type = "Outgoing",
+            subject = "Response to Lab Safety Compliance Inquiry",
+            content = "Enclosed are the certified inspection logs for 2026.",
+            authorId = dean,
+            priority = "Normal",
+            isConfidential = false,
+            parentCorrespondenceId = parentId
+        });
+        Assert.Equal(HttpStatusCode.Created, replyRes.StatusCode);
+        var replyId = IdOf(await replyRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // 4. Verify thread linkage
+        var thread = await client.GetFromJsonAsync<JsonElement>($"/api/correspondence/{replyId}/thread?tenantId={tenant}");
+        Assert.Equal(parentId, thread.GetProperty("root").GetProperty("id").GetGuid());
+        Assert.Equal(replyId, thread.GetProperty("current").GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Folderit_Document_Retention_Policy_And_Audit_Flow()
+    {
+        var perms = AllPerms.Concat(["document:create", "document:read", "document:update"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "ISO Compliance Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        var auditor = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Quality Lead" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var docRes = await client.PostAsJsonAsync("/api/documents", new { tenantId = tenant, title = "ISO-9001 Quality Manual 2026" });
+        var docId = IdOf(await docRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // Set ISO Retention Policy
+        var policyRes = await client.PostAsJsonAsync($"/api/documents/{docId}/retention-policy", new
+        {
+            tenantId = tenant,
+            standard = "ISO 9001:2015",
+            retentionPeriodMonths = 120, // 10 years
+            dispositionAction = "PermanentPreservation",
+            reviewIntervalMonths = 12,
+            reviewedByPersonId = auditor,
+            notes = "Accreditation master document, retained indefinitely under ISO clause 7.5"
+        });
+        Assert.Equal(HttpStatusCode.OK, policyRes.StatusCode);
+        var policyJson = await policyRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("ISO 9001:2015", policyJson.GetProperty("standard").GetString());
+        Assert.Equal("PermanentPreservation", policyJson.GetProperty("dispositionAction").GetString());
+
+        // Fetch policy
+        var fetched = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}/retention-policy?tenantId={tenant}");
+        Assert.Equal("ISO 9001:2015", fetched.GetProperty("standard").GetString());
+    }
+
+    [Fact]
+    public async Task Standing_Authority_Delegation_And_Workflow_Rerouting_Flow()
+    {
+        var perms = AllPerms.Concat(["workflow:manage", "workflow:create", "workflow:read", "request:create", "request:read", "approval:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Delegation Governance Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // 1. Create Delegator (Dean) and Deputy (Vice Dean)
+        var dean = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Dean Al-Mansoor" })).Content.ReadFromJsonAsync<JsonElement>());
+        var deputy = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Vice Dean Al-Husseini" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        // 2. Set standing authority delegation
+        var delRes = await client.PostAsJsonAsync($"/api/people/{dean}/delegations", new
+        {
+            tenantId = tenant,
+            fromPersonId = dean,
+            toPersonId = deputy,
+            scope = "Workflow;Approval",
+            expiresAt = DateTimeOffset.UtcNow.AddDays(14)
+        });
+        Assert.Equal(HttpStatusCode.Created, delRes.StatusCode);
+        var delegationJson = await delRes.Content.ReadFromJsonAsync<JsonElement>();
+        var delId = IdOf(delegationJson);
+        Assert.Equal(deputy, delegationJson.GetProperty("toPersonId").GetGuid());
+
+        // 3. Verify delegations list
+        var delegations = await client.GetFromJsonAsync<JsonElement>($"/api/people/{dean}/delegations?tenantId={tenant}");
+        Assert.Equal(1, delegations.GetArrayLength());
+
+        // 4. Create a workflow definition where step 1 is assigned to Dean
+        var nodes = new object[]
+        {
+            new { id = "start", type = "start" },
+            new { id = "dean_approval", type = "approval", personId = dean.ToString(), slaDays = 3 },
+            new { id = "end", type = "end" }
+        };
+        var wfRes = await client.PostAsJsonAsync("/api/workflows/definitions", new
+        {
+            tenantId = tenant,
+            code = "EXP_APP_01",
+            name = "Expense Approval Chain",
+            nodesJson = JsonSerializer.Serialize(nodes)
+        });
+        Assert.Equal(HttpStatusCode.Created, wfRes.StatusCode);
+
+        // 5. Submit a request targeting the workflow
+        var reqRes = await client.PostAsJsonAsync("/api/requests", new
+        {
+            tenantId = tenant,
+            category = "Academic",
+            title = "International Conference Leave",
+            submitterId = deputy
+        });
+        Assert.Equal(HttpStatusCode.Created, reqRes.StatusCode);
+        var reqId = IdOf(await reqRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        var submitRes = await client.PostAsJsonAsync($"/api/requests/{reqId}/submit", new
+        {
+            tenantId = tenant,
+            workflowCode = "EXP_APP_01"
+        });
+        Assert.Equal(HttpStatusCode.OK, submitRes.StatusCode);
+
+        // 6. Verify that the generated approval was re-routed to Deputy because of standing delegation!
+        var approvals = await client.GetFromJsonAsync<JsonElement>($"/api/approvals?tenantId={tenant}&assigneeId={deputy}");
+        Assert.True(approvals.GetArrayLength() > 0);
+        Assert.Equal(deputy, approvals[0].GetProperty("assigneeId").GetGuid());
+
+        // 7. Revoke delegation
+        var deleteRes = await client.DeleteAsync($"/api/people/{dean}/delegations/{delId}?tenantId={tenant}");
+        Assert.Equal(HttpStatusCode.NoContent, deleteRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task AzeusConvene_Board_Packet_Dossier_Compilation_Flow()
+    {
+        var perms = AllPerms.Concat(["committee:create", "committee:read", "meeting:create", "meeting:read", "decision:create", "decision:read"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Azeus Board Governance Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // Create committee & 3 members
+        var m1 = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Trustee 1" })).Content.ReadFromJsonAsync<JsonElement>());
+        var m2 = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Trustee 2" })).Content.ReadFromJsonAsync<JsonElement>());
+        var m3 = IdOf(await (await client.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Trustee 3" })).Content.ReadFromJsonAsync<JsonElement>());
+
+        var cRes = await client.PostAsJsonAsync("/api/committees", new { tenantId = tenant, code = "BOARD", name = "Board of Trustees" });
+        var cId = IdOf(await cRes.Content.ReadFromJsonAsync<JsonElement>());
+        await client.PostAsJsonAsync($"/api/committees/{cId}/members", new { tenantId = tenant, personId = m1, role = "Chair" });
+        await client.PostAsJsonAsync($"/api/committees/{cId}/members", new { tenantId = tenant, personId = m2, role = "Member" });
+        await client.PostAsJsonAsync($"/api/committees/{cId}/members", new { tenantId = tenant, personId = m3, role = "Member" });
+
+        // Create meeting with agenda
+        var meetRes = await client.PostAsJsonAsync("/api/meetings", new
+        {
+            tenantId = tenant,
+            committeeId = cId,
+            title = "Q3 Annual Governance Review",
+            startsAt = DateTimeOffset.UtcNow,
+            agenda = new[]
+            {
+                new { title = "Budget Ratification 2027", description = "Vote on university expansion budget" },
+                new { title = "Honorary Degrees", description = "Review nominated candidates" }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Created, meetRes.StatusCode);
+        var meetId = IdOf(await meetRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // Attendance: 2 Present, 1 Absent -> Quorum achieved (2/3)
+        await client.PostAsJsonAsync($"/api/meetings/{meetId}/attendance", new { tenantId = tenant, personId = m1, status = "Present" });
+        await client.PostAsJsonAsync($"/api/meetings/{meetId}/attendance", new { tenantId = tenant, personId = m2, status = "Present" });
+        await client.PostAsJsonAsync($"/api/meetings/{meetId}/attendance", new { tenantId = tenant, personId = m3, status = "Absent" });
+
+        // Get agenda item id from meeting
+        var meetObj = await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meetId}?tenantId={tenant}");
+        var agendaList = meetObj.GetProperty("agenda");
+        var item1Id = agendaList[0].GetProperty("id").GetGuid();
+
+        // Cast votes
+        await client.PostAsJsonAsync($"/api/meetings/{meetId}/votes", new { tenantId = tenant, agendaItemId = item1Id, personId = m1, choice = "InFavor", remarks = "Approved as budgeted" });
+        await client.PostAsJsonAsync($"/api/meetings/{meetId}/votes", new { tenantId = tenant, agendaItemId = item1Id, personId = m2, choice = "InFavor" });
+
+        // Conclude meeting
+        await client.PostAsJsonAsync($"/api/meetings/{meetId}/conclude", new { tenantId = tenant, minutes = "Certified Board Minutes for Q3 Session." });
+
+        // Fetch Convene Board Packet Dossier
+        var packet = await client.GetFromJsonAsync<JsonElement>($"/api/meetings/{meetId}/packet?tenantId={tenant}");
+        Assert.True(packet.GetProperty("governance").GetProperty("hasQuorum").GetBoolean());
+        Assert.Equal(2, packet.GetProperty("governance").GetProperty("presentCount").GetInt32());
+        Assert.Equal(3, packet.GetProperty("governance").GetProperty("totalMembers").GetInt32());
+        Assert.Equal(2, packet.GetProperty("agenda").GetArrayLength());
+        Assert.True(packet.GetProperty("certification").GetProperty("isConcluded").GetBoolean());
+        Assert.Equal("Certified Board Minutes for Q3 Session.", packet.GetProperty("certification").GetProperty("minutes").GetString());
+
+        var tallies = packet.GetProperty("votingTallies");
+        Assert.Equal(1, tallies.GetArrayLength());
+        Assert.Equal(2, tallies[0].GetProperty("inFavor").GetInt32());
+    }
+
+    [Fact]
+    public async Task Odoo_Document_Action_Rule_AutoRetention_Trigger_Flow()
+    {
+        var perms = AllPerms.Concat(["document:create", "document:read", "document:update"]).ToArray();
+        var bootstrap = factory.CreateClient();
+        Auth(bootstrap, Mint(Guid.NewGuid(), perms));
+        var tenant = IdOf(await (await bootstrap.PostAsJsonAsync("/api/tenants",
+            new { slug = $"t-{Guid.NewGuid():N}", name = "Automated DMS Uni" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, perms));
+
+        // 1. Create Automated Document Action Rule
+        var config = JsonSerializer.Serialize(new
+        {
+            standard = "ISO-14001:2015",
+            retentionMonths = 84,
+            reviewIntervalMonths = 12,
+            disposition = "PermanentPreservation"
+        });
+
+        var ruleRes = await client.PostAsJsonAsync("/api/documents/action-rules", new
+        {
+            tenantId = tenant,
+            triggerCategory = "Tag",
+            triggerValue = "EnvironmentalCompliance",
+            actionType = "AutoRetention",
+            targetValue = config
+        });
+        Assert.Equal(HttpStatusCode.Created, ruleRes.StatusCode);
+        var ruleId = IdOf(await ruleRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // 2. Fetch action rules
+        var rules = await client.GetFromJsonAsync<JsonElement>($"/api/documents/action-rules?tenantId={tenant}");
+        Assert.Equal(1, rules.GetArrayLength());
+
+        // 3. Create document
+        var docRes = await client.PostAsJsonAsync("/api/documents", new { tenantId = tenant, title = "2026 Campus Carbon Emission Audit" });
+        var docId = IdOf(await docRes.Content.ReadFromJsonAsync<JsonElement>());
+
+        // 4. Add matching tag to trigger the action rule
+        var tagRes = await client.PostAsJsonAsync($"/api/documents/{docId}/tags", new
+        {
+            tenantId = tenant,
+            category = "Tag",
+            value = "EnvironmentalCompliance"
+        });
+        Assert.Equal(HttpStatusCode.Created, tagRes.StatusCode);
+
+        // 5. Verify the retention policy was automatically created by the rule!
+        var policy = await client.GetFromJsonAsync<JsonElement>($"/api/documents/{docId}/retention-policy?tenantId={tenant}");
+        Assert.Equal("ISO-14001:2015", policy.GetProperty("standard").GetString());
+        Assert.Equal("PermanentPreservation", policy.GetProperty("dispositionAction").GetString());
+        Assert.Equal(84, policy.GetProperty("retentionPeriodMonths").GetInt32());
+
+        // 6. Clean up rule
+        var delRuleRes = await client.DeleteAsync($"/api/documents/action-rules/{ruleId}?tenantId={tenant}");
+        Assert.Equal(HttpStatusCode.NoContent, delRuleRes.StatusCode);
+    }
 }
+

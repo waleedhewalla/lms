@@ -57,11 +57,19 @@ services:
     image: grafana/grafana:11.4.0
     container_name: edunexus-grafana
     restart: unless-stopped
-    ports: ["3001:3000"]
+    ports: ["3021:3000"]
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: edunexus
     volumes: [grafanadata:/var/lib/grafana, ./grafana/datasource.yml:/etc/grafana/provisioning/datasources/edunexus.yml:ro, ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/edunexus.yml:ro, ./grafana/dashboard-api.json:/etc/grafana/dashboards/api.json:ro]
+  tempo:
+    image: grafana/tempo:2.7.0
+    container_name: edunexus-tempo
+    restart: unless-stopped
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+    ports: ["4317:4317", "4318:4318", "3200:3200"]
   # Local OIDC IdP for integration proofs. Opt-in: compose --profile idp up keycloak
   keycloak:
     image: quay.io/keycloak/keycloak:26.0

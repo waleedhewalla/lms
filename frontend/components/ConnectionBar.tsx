@@ -1,13 +1,16 @@
 "use client";
 import { useState } from "react";
+import { useTranslation } from "./TranslationProvider";
 
 export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; setTenantId: (v: string) => void }) {
+  const { t } = useTranslation();
   const [token, setToken] = useState("");
   const [status, setStatus] = useState("");
+  
   async function mint() {
     setStatus("…");
     try {
-      const res = await fetch("http://127.0.0.1:5299/api/auth/dev-token", {
+      const res = await fetch("http://127.0.0.1:5238/api/auth/dev-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -25,12 +28,29 @@ export function ConnectionBar({ tenantId, setTenantId }: { tenantId: string; set
       setStatus(String(e));
     }
   }
+  
   return (
-    <section style={{ border: "1px solid #ccc", padding: 12, marginBottom: 16 }}>
-      <h3>Connection (dev)</h3>
-      <label>Tenant ID <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} size={40} /></label>{" "}
-      <button onClick={mint}>Mint dev token</button>{" "}
-      <span>{token} {status}</span>
-    </section>
+    <div className="glass-card" style={{ marginBottom: '2rem' }}>
+      <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <span style={{ fontSize: '1.2rem' }}>🔑</span> {t("conn.title")}
+      </h3>
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="form-group" style={{ flex: 1, minWidth: '300px', margin: 0 }}>
+          <label>{t("conn.tenant")}</label>
+          <input 
+            className="input" 
+            value={tenantId} 
+            onChange={(e) => setTenantId(e.target.value)} 
+            placeholder={t("conn.placeholder")}
+          />
+        </div>
+        <button className="btn" onClick={mint}>{t("conn.btn")}</button>
+      </div>
+      {(token || status) && (
+        <div style={{ marginTop: '1rem', fontSize: '0.9rem', opacity: 0.8 }}>
+          <span className="badge" style={{ margin: 0 }}>{status}</span> {token && <span style={{ marginLeft: '0.5rem', fontFamily: 'monospace' }}>{token}</span>}
+        </div>
+      )}
+    </div>
   );
 }

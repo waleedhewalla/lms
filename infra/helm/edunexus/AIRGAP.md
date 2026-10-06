@@ -22,5 +22,10 @@
 #        --set registry=registry.local:5000/ \
 #        --set api.auth.authority=https://idp.local/realms/edunexus \
 #        -f site-values.yaml
-# 5. Run EF migrations as a Job (dotnet-ef container or init container), verify /health,
-#    restore backup per infra/postgres/RUNBOOK.md if migrating.
+# 5. Automatic Database Migration:
+#      The Helm chart includes a pre-install/pre-upgrade hook (templates/migrate-job.yaml)
+#      that automatically executes `dotnet EduNexus.Api.dll --migrate-only` in a Kubernetes Job
+#      before API pods start up.
+# 6. Package offline chart tarball:
+#      helm package ./infra/helm/edunexus -d ./build/
+

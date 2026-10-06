@@ -29,27 +29,31 @@ public sealed record Organization(Guid Id, Guid TenantId, string Code, string Na
 
 public sealed record Campus(Guid Id, Guid OrganizationId, Guid TenantId, string Code, string Name);
 
-public sealed record OrganizationalUnit(Guid Id, Guid TenantId, Guid? ParentId, string Code, string Name, bool IsActive)
+public sealed record OrganizationalUnit(
+    Guid Id, Guid TenantId, Guid? ParentId, string Code, string Name, bool IsActive,
+    Guid? LeaderPersonId = null, Guid? DeputyPersonId = null)
 {
-    public static OrganizationalUnit Create(Guid tenantId, string code, string name, Guid? parentId = null)
+    public static OrganizationalUnit Create(Guid tenantId, string code, string name, Guid? parentId = null, Guid? leaderPersonId = null, Guid? deputyPersonId = null)
     {
         if (tenantId == Guid.Empty) throw new ArgumentException("Tenant required.", nameof(tenantId));
         if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("Code required.", nameof(code));
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Name required.", nameof(name));
         if (parentId == Guid.Empty) throw new ArgumentException("Invalid parent.", nameof(parentId));
-        return new OrganizationalUnit(Guid.NewGuid(), tenantId, parentId, code.Trim(), name.Trim(), true);
+        return new OrganizationalUnit(Guid.NewGuid(), tenantId, parentId, code.Trim(), name.Trim(), true, leaderPersonId, deputyPersonId);
     }
 }
 
 public enum PersonType { Employee, Student, Other }
 
-public sealed record Person(Guid Id, Guid TenantId, PersonType Type, string FullName, string? Email, bool IsActive, DateTimeOffset CreatedAt)
+public sealed record Person(
+    Guid Id, Guid TenantId, PersonType Type, string FullName, string? Email, bool IsActive, DateTimeOffset CreatedAt,
+    Guid? DepartmentId = null, string? AcademicRank = null)
 {
-    public static Person Create(Guid tenantId, PersonType type, string fullName, string? email = null)
+    public static Person Create(Guid tenantId, PersonType type, string fullName, string? email = null, Guid? departmentId = null, string? academicRank = null)
     {
         if (tenantId == Guid.Empty) throw new ArgumentException("Tenant required.", nameof(tenantId));
         if (string.IsNullOrWhiteSpace(fullName)) throw new ArgumentException("Full name required.", nameof(fullName));
-        return new Person(Guid.NewGuid(), tenantId, type, fullName.Trim(), email?.Trim(), true, DateTimeOffset.UtcNow);
+        return new Person(Guid.NewGuid(), tenantId, type, fullName.Trim(), email?.Trim(), true, DateTimeOffset.UtcNow, departmentId, academicRank);
     }
 }
 
@@ -107,17 +111,20 @@ public enum CorrespondenceStatus { Draft, Submitted, InReview, Approved, Rejecte
 public sealed record Correspondence(
     Guid Id, Guid TenantId, string Number, CorrespondenceType Type,
     string Subject, string Content, Guid AuthorId, CorrespondencePriority Priority,
-    bool IsConfidential, CorrespondenceStatus Status, DateTimeOffset CreatedAt)
+    bool IsConfidential, CorrespondenceStatus Status, DateTimeOffset CreatedAt,
+    Guid? ParentCorrespondenceId = null)
 {
     public static Correspondence Create(Guid tenantId, CorrespondenceType type, string subject,
-        string content, Guid authorId, CorrespondencePriority priority, bool isConfidential)
+        string content, Guid authorId, CorrespondencePriority priority, bool isConfidential,
+        Guid? parentCorrespondenceId = null)
     {
         if (tenantId == Guid.Empty) throw new ArgumentException("Tenant required.", nameof(tenantId));
         if (string.IsNullOrWhiteSpace(subject)) throw new ArgumentException("Subject required.", nameof(subject));
         if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("Content required.", nameof(content));
         // Number assigned by the store (unique per tenant). Placeholder replaced on insert.
         return new Correspondence(Guid.NewGuid(), tenantId, "", type, subject.Trim(), content,
-            authorId, priority, isConfidential, CorrespondenceStatus.Draft, DateTimeOffset.UtcNow);
+            authorId, priority, isConfidential, CorrespondenceStatus.Draft, DateTimeOffset.UtcNow,
+            parentCorrespondenceId);
     }
 }
 
@@ -315,3 +322,55 @@ public sealed record Communication(
     CommunicationStatus Status, DateTimeOffset CreatedAt, DateTimeOffset? PublishedAt);
 
 public sealed record CommunicationRecipient(Guid Id, Guid TenantId, Guid CommunicationId, Guid PersonId);
+
+// ============================ R0.2 Odoo-Inspired Foundations: Chatter, Activities, Workspaces ============================
+
+public enum ActivityType { ToDo, Review, Sign, Call, Meeting }
+
+public sealed record ScheduledActivity(
+    Guid Id, Guid TenantId, string EntityType, Guid EntityId,
+    ActivityType Type, Guid AssigneeId, string Summary,
+    DateTimeOffset DueDate, bool IsCompleted, DateTimeOffset? CompletedAt,
+    DateTimeOffset CreatedAt);
+
+public sealed record RecordComment(
+    Guid Id, Guid TenantId, string EntityType, Guid EntityId,
+    Guid AuthorId, string Content, bool IsInternalOnly, DateTimeOffset CreatedAt);
+
+public sealed record EntityFollower(
+    Guid Id, Guid TenantId, string EntityType, Guid EntityId,
+    Guid PersonId, DateTimeOffset CreatedAt);
+
+public sealed record DocumentWorkspace(
+    Guid Id, Guid TenantId, string Code, string Name, string? Description, bool IsActive);
+
+public sealed record DocumentTag(
+    Guid Id, Guid TenantId, Guid DocumentId, string TagCategory, string TagValue);
+
+// ============================ R0.3 Enterprise Benchmarks: Azeus Convene (Governance), Folderit (ISO DMS), Odoo Correspondence ============================
+
+public enum VoteChoice { InFavor, Against, Abstain }
+
+public sealed record MeetingVote(
+    Guid Id, Guid TenantId, Guid MeetingId, Guid AgendaItemId,
+    Guid PersonId, VoteChoice Choice, DateTimeOffset CastAt, string? Remarks = null);
+
+public enum DispositionAction { Archive, PermanentPreservation, ReviewRequired, Disposal }
+
+public sealed record DocumentRetentionPolicy(
+    Guid Id, Guid TenantId, Guid DocumentId, string Standard,
+    int RetentionPeriodMonths, DispositionAction DispositionAction,
+    int ReviewIntervalMonths, DateTimeOffset? LastReviewedAt,
+    DateTimeOffset NextReviewDueAt, Guid? ReviewedByPersonId = null, string? Notes = null);
+
+public sealed record CorrespondenceRoutingSlip(
+    Guid Id, Guid TenantId, Guid CorrespondenceId, Guid FromPersonId,
+    Guid? ToUnitId, Guid? ToPersonId, string ActionRequired, string Instructions,
+    DateTimeOffset? DueAt, DateTimeOffset CreatedAt, bool IsCompleted = false,
+    DateTimeOffset? CompletedAt = null);
+
+public sealed record DocumentActionRule(
+    Guid Id, Guid TenantId, string TriggerCategory, string TriggerValue,
+    string ActionType, string? TargetValue = null, bool IsActive = true);
+
+

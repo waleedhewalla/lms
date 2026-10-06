@@ -81,7 +81,7 @@ public static class WorkflowRunner
             {
                 case "approval":
                 {
-                    var assignee = await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct);
+                    var assignee = await ApplyDelegationFallbackAsync(db, tenantId, await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct), ct);
                     var slaDays = node.TryGetProperty("slaDays", out var s) && s.ValueKind == JsonValueKind.Number
                         ? s.GetInt32() : 5;
                     var approval = new Approval(Guid.NewGuid(), tenantId, instance.EntityType, instance.EntityId,
@@ -104,7 +104,7 @@ public static class WorkflowRunner
                 }
                 case "task":
                 {
-                    var assignee = await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct);
+                    var assignee = await ApplyDelegationFallbackAsync(db, tenantId, await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct), ct);
                     var title = node.TryGetProperty("title", out var tt) ? tt.GetString() ?? "Workflow task" : "Workflow task";
                     var task = new WorkTask(Guid.NewGuid(), tenantId, title, assignee,
                         null, WorkTaskStatus.Open, DateTimeOffset.UtcNow.AddDays(7), DateTimeOffset.UtcNow);
@@ -122,7 +122,7 @@ public static class WorkflowRunner
                 }
                 case "notification":
                 {
-                    var personId = await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct);
+                    var personId = await ApplyDelegationFallbackAsync(db, tenantId, await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct), ct);
                     var text = node.TryGetProperty("text", out var tx) ? tx.GetString() ?? "Workflow update" : "Workflow update";
                     db.Notifications.Add(new Notification(Guid.NewGuid(), tenantId, personId,
                         "Workflow update", text, NotificationChannel.InApp, NotificationStatus.Sent, DateTimeOffset.UtcNow));
@@ -160,15 +160,67 @@ public static class WorkflowRunner
             if (await db.People.AnyAsync(x => x.TenantId == tenantId && x.Id == pid, ct)) return pid;
             throw new KeyNotFoundException($"Workflow assignee {pid} not found in tenant.");
         }
-        if (node.TryGetProperty("assigneeFrom", out var af) && af.GetString() == "submitter")
+        if (node.TryGetProperty("assigneeFrom", out var af))
         {
+            var key = af.GetString()?.ToLowerInvariant();
+            var sid = Guid.Empty;
             try
             {
                 using var ctx = JsonDocument.Parse(instance.ContextJson);
-                if (ctx.RootElement.TryGetProperty("submitterId", out var s) && Guid.TryParse(s.GetString(), out var sid))
-                    return sid;
+                if (ctx.RootElement.TryGetProperty("submitterId", out var s) && Guid.TryParse(s.GetString(), out var parsedSid))
+                    sid = parsedSid;
             }
             catch { }
+
+            if (sid == Guid.Empty) sid = fallback;
+
+            if (key == "submitter")
+            {
+                return sid;
+            }
+
+            if (key is "submitter_head" or "department_head" or "head")
+            {
+                var person = await db.People.FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Id == sid, ct);
+                if (person?.DepartmentId is Guid deptId)
+                {
+                    var unit = await db.OrganizationalUnits.FirstOrDefaultAsync(u => u.TenantId == tenantId && u.Id == deptId, ct);
+                    if (unit?.LeaderPersonId is Guid leaderId && leaderId != Guid.Empty)
+                        return leaderId;
+                }
+                throw new KeyNotFoundException($"Could not resolve department head for submitter {sid}.");
+            }
+
+            if (key is "submitter_deputy" or "deputy")
+            {
+                var person = await db.People.FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Id == sid, ct);
+                if (person?.DepartmentId is Guid deptId)
+                {
+                    var unit = await db.OrganizationalUnits.FirstOrDefaultAsync(u => u.TenantId == tenantId && u.Id == deptId, ct);
+                    if (unit?.DeputyPersonId is Guid depId && depId != Guid.Empty)
+                        return depId;
+                }
+                throw new KeyNotFoundException($"Could not resolve deputy head for submitter {sid}.");
+            }
+
+            if (key is "submitter_dean" or "dean")
+            {
+                var person = await db.People.FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Id == sid, ct);
+                if (person?.DepartmentId is Guid deptId)
+                {
+                    var unit = await db.OrganizationalUnits.FirstOrDefaultAsync(u => u.TenantId == tenantId && u.Id == deptId, ct);
+                    if (unit?.ParentId is Guid parentId)
+                    {
+                        var parentUnit = await db.OrganizationalUnits.FirstOrDefaultAsync(u => u.TenantId == tenantId && u.Id == parentId, ct);
+                        if (parentUnit?.LeaderPersonId is Guid deanId && deanId != Guid.Empty)
+                            return deanId;
+                    }
+                    if (unit?.LeaderPersonId is Guid leaderId && leaderId != Guid.Empty)
+                        return leaderId;
+                }
+                throw new KeyNotFoundException($"Could not resolve dean for submitter {sid}.");
+            }
+
             return fallback;
         }
         if (node.TryGetProperty("roleCode", out var rc))
@@ -185,5 +237,16 @@ public static class WorkflowRunner
             throw new KeyNotFoundException($"No assignee found for role '{rc}'.");
         }
         return fallback;
+    }
+
+    private static async Task<Guid> ApplyDelegationFallbackAsync(AppDbContext db, Guid tenantId, Guid targetPersonId, CancellationToken ct)
+    {
+        if (targetPersonId == Guid.Empty) return targetPersonId;
+        var now = DateTimeOffset.UtcNow;
+        var delegation = await db.AuthorityDelegations
+            .Where(d => d.TenantId == tenantId && d.FromPersonId == targetPersonId && d.ExpiresAt > now)
+            .OrderByDescending(d => d.ExpiresAt)
+            .FirstOrDefaultAsync(ct);
+        return delegation is not null && delegation.ToPersonId != Guid.Empty ? delegation.ToPersonId : targetPersonId;
     }
 }

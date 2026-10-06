@@ -57,6 +57,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<TaskComment> TaskComments => Set<TaskComment>();
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
     public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
+    public DbSet<ScheduledActivity> ScheduledActivities => Set<ScheduledActivity>();
+    public DbSet<RecordComment> RecordComments => Set<RecordComment>();
+    public DbSet<EntityFollower> EntityFollowers => Set<EntityFollower>();
+    public DbSet<DocumentWorkspace> DocumentWorkspaces => Set<DocumentWorkspace>();
+    public DbSet<DocumentTag> DocumentTags => Set<DocumentTag>();
+    public DbSet<MeetingVote> MeetingVotes => Set<MeetingVote>();
+    public DbSet<DocumentRetentionPolicy> DocumentRetentionPolicies => Set<DocumentRetentionPolicy>();
+    public DbSet<CorrespondenceRoutingSlip> CorrespondenceRoutingSlips => Set<CorrespondenceRoutingSlip>();
+    public DbSet<DocumentActionRule> DocumentActionRules => Set<DocumentActionRule>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    }
 
     public async Task SetTenantAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -134,6 +148,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.Number }).IsUnique();
             e.HasIndex(x => new { x.TenantId, x.Status });
+            e.HasIndex(x => new { x.TenantId, x.ParentCorrespondenceId });
             e.Property(x => x.Number).HasMaxLength(30).IsRequired();
             e.Property(x => x.Subject).HasMaxLength(300).IsRequired();
             e.Property(x => x.Type).HasConversion<string>().HasMaxLength(20);
@@ -378,6 +393,72 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.CommunicationId, x.PersonId }).IsUnique();
+        });
+        b.Entity<ScheduledActivity>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
+            e.HasIndex(x => new { x.TenantId, x.AssigneeId, x.IsCompleted });
+            e.Property(x => x.Type).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Summary).HasMaxLength(500).IsRequired();
+        });
+        b.Entity<RecordComment>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
+            e.Property(x => x.Content).IsRequired();
+        });
+        b.Entity<EntityFollower>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId, x.PersonId }).IsUnique();
+        });
+        b.Entity<DocumentWorkspace>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        });
+        b.Entity<DocumentTag>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.DocumentId });
+            e.Property(x => x.TagCategory).HasMaxLength(50).IsRequired();
+            e.Property(x => x.TagValue).HasMaxLength(100).IsRequired();
+        });
+        b.Entity<MeetingVote>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.MeetingId, x.AgendaItemId, x.PersonId }).IsUnique();
+            e.Property(x => x.Choice).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Remarks).HasMaxLength(500);
+        });
+        b.Entity<DocumentRetentionPolicy>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.DocumentId }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.NextReviewDueAt });
+            e.Property(x => x.Standard).HasMaxLength(100).IsRequired();
+            e.Property(x => x.DispositionAction).HasConversion<string>().HasMaxLength(50);
+            e.Property(x => x.Notes).HasMaxLength(1000);
+        });
+        b.Entity<CorrespondenceRoutingSlip>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CorrespondenceId });
+            e.HasIndex(x => new { x.TenantId, x.ToPersonId, x.IsCompleted });
+            e.Property(x => x.ActionRequired).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Instructions).IsRequired();
+        });
+        b.Entity<DocumentActionRule>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.TriggerCategory, x.TriggerValue, x.IsActive });
+            e.Property(x => x.TriggerCategory).HasMaxLength(50).IsRequired();
+            e.Property(x => x.TriggerValue).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ActionType).HasMaxLength(50).IsRequired();
+            e.Property(x => x.TargetValue).HasMaxLength(500);
         });
     }
 }
