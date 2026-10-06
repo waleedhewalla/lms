@@ -47,6 +47,8 @@ dotnet run --project backend/src/EduNexus.Api
 cd frontend; npm install; npm run dev
 ```
 
+Then open the web app at http://localhost:8000 (API: http://localhost:5238).
+
 Foundation scope (M1–M3): Tenant, Organization/Campus/Unit, Identity (OIDC),
 Roles/Permissions/Authority, Directory (Person/Employee/Student), Security, Audit, Config.
 

@@ -15,7 +15,7 @@ export const options = {
 
 export default function () {
   // Test the frontend Next.js server locally
-  const resWeb = http.get('http://host.docker.internal:3020');
+  const resWeb = http.get('http://host.docker.internal:8000');
   check(resWeb, {
     'web status is 200': (r) => r.status === 200,
   });

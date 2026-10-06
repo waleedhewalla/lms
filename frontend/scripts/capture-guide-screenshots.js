@@ -46,12 +46,12 @@ const path = require('path');
   await page.route('**/api/roles/revoke', route => route.fulfill({ status: 200 }));
 
   // 1. Dashboard Overview
-  await page.goto('http://localhost:3020');
+  await page.goto('http://localhost:8000');
   await page.waitForTimeout(1000); // Wait for animations
   await page.screenshot({ path: path.join(outDir, 'dashboard.png') });
 
   // 2. Roles Management Page
-  await page.goto('http://localhost:3020/roles');
+  await page.goto('http://localhost:8000/roles');
   await page.waitForTimeout(1000);
   
   // Fill in Tenant ID and Mint Token to show connected state
