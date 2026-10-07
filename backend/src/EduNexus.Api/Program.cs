@@ -1,3 +1,4 @@
+using EduNexus.Api.Hosting;
 using System;
 using System.Text;
 using System.Text.Json;
@@ -39,13 +40,8 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     if (corsOrigins.Length > 0) p.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Content-Disposition");
     else if (builder.Environment.IsDevelopment()) p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Content-Disposition");
 }));
-// Behind an ingress / reverse proxy: honour X-Forwarded-For/Proto so HTTPS metadata and client IPs are correct.
-builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(o =>
-{
-    o.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
-    o.KnownNetworks.Clear();
-    o.KnownProxies.Clear();
-});
+// Trusted-proxy forwarded headers, per-caller rate limiting, internal-only /metrics (Hosting/EdgeProtection.cs).
+builder.Services.AddEdgeProtection(builder.Configuration);
 builder.Services.AddHealthChecks();
 
 var conn = Environment.GetEnvironmentVariable("EDUNEXUS_CONNECTION")
@@ -153,6 +149,7 @@ if (app.Environment.IsDevelopment())
 app.UseForwardedHeaders();
 app.UseCors();
 app.UseAuthentication();
+app.UseEdgeProtection();
 app.UseAuthorization();
 app.Use(async (ctx, next) =>
 {

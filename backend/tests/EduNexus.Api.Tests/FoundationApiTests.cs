@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -2050,6 +2051,65 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
             Assert.True(EduNexus.Api.Integrations.OutboundUrlGuard.IsBlocked(System.Net.IPAddress.Parse(ip)), ip);
         foreach (var ip in new[] { "8.8.8.8", "1.1.1.1", "2606:4700:4700::1111" })
             Assert.False(EduNexus.Api.Integrations.OutboundUrlGuard.IsBlocked(System.Net.IPAddress.Parse(ip)), ip);
+    }
+    [Fact]
+    public async Task RateLimit_Returns_429_With_RetryAfter_Per_Caller()
+    {
+        using var limited = factory.WithWebHostBuilder(b =>
+        {
+            b.UseSetting("RateLimiting:PermitsPerMinute", "5");
+            b.UseSetting("RateLimiting:ExpensivePermitsPerMinute", "2");
+        });
+        var tenant = Guid.NewGuid();
+        var tokens = limited.Services.GetRequiredService<DevTokenService>();
+        var a = limited.CreateClient();
+        a.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.Mint("caller-a", tenant, ["tenant:read"]));
+        var b = limited.CreateClient();
+        b.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.Mint("caller-b", tenant, ["tenant:read"]));
+
+        for (var i = 0; i < 5; i++) Assert.NotEqual(HttpStatusCode.TooManyRequests, (await a.GetAsync("/api/auth/me")).StatusCode);
+        var over = await a.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.TooManyRequests, over.StatusCode);
+        Assert.True(over.Headers.RetryAfter is not null);
+        // Another caller has its own budget; health checks are never limited.
+        Assert.Equal(HttpStatusCode.OK, (await b.GetAsync("/api/auth/me")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await a.GetAsync("/health")).StatusCode);
+
+        // Expensive endpoints have a tighter budget on top of the general one.
+        var c = limited.CreateClient();
+        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.Mint("caller-c", tenant, ["search:read"]));
+        for (var i = 0; i < 2; i++) Assert.NotEqual(HttpStatusCode.TooManyRequests, (await c.GetAsync($"/api/search/suggest?tenantId={tenant}&q=ab")).StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await c.GetAsync($"/api/search/suggest?tenantId={tenant}&q=ab")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("10.0.0.5", null, HttpStatusCode.OK)]            // Prometheus in-cluster
+    [InlineData("203.0.113.5", null, HttpStatusCode.NotFound)]   // public caller hitting the pod directly
+    [InlineData("10.0.0.5", "203.0.113.9", HttpStatusCode.NotFound)] // public caller through the trusted ingress
+    [InlineData("203.0.113.5", "10.0.0.1", HttpStatusCode.NotFound)] // spoofed X-Forwarded-For from an untrusted peer
+    public async Task Metrics_Only_Served_To_Internal_Callers(string peer, string? forwardedFor, HttpStatusCode expected)
+    {
+        using var app = factory.WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter>(new PeerIpStartupFilter())));
+        var client = app.CreateClient();
+        var req = new HttpRequestMessage(HttpMethod.Get, "/metrics");
+        req.Headers.Add(PeerIpStartupFilter.Header, peer);
+        if (forwardedFor is not null) req.Headers.Add("X-Forwarded-For", forwardedFor);
+        Assert.Equal(expected, (await client.SendAsync(req)).StatusCode);
+    }
+
+    /// <summary>The in-memory test server has no socket; this sets the peer address the API sees.</summary>
+    private sealed class PeerIpStartupFilter : Microsoft.AspNetCore.Hosting.IStartupFilter
+    {
+        public const string Header = "X-Test-Peer-IP";
+        public Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> Configure(Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (ctx, nextMiddleware) =>
+            {
+                if (ctx.Request.Headers.TryGetValue(Header, out var ip)) ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(ip!);
+                await nextMiddleware();
+            });
+            next(app);
+        };
     }
 }
 

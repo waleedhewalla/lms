@@ -19,6 +19,10 @@
 - Web: per-request Content-Security-Policy (connect-src limited to the configured API and IdP,
   frame-ancestors 'none', object-src 'none', form-action limited to self + IdP) plus nosniff, DENY, no-referrer.
 - CORS restricted to configured origins; production refuses dev auth; non-root containers.
+- Rate limiting in the API (2026-10-07): fixed window per user+tenant (per IP when anonymous), default 600/min,
+  plus 60/min for AI, search, exports and token minting; 429 + `Retry-After`. Load tests run with it on: 0% errors.
+- `X-Forwarded-*` trusted only from private-network proxies (configurable), closing IP spoofing that the
+  earlier "trust everyone" setting allowed. `/metrics` answers only loopback/private callers.
 
 ## Vulnerability audit 2026-09-11 (superseded)
 - `dotnet list package --vulnerable`: 1 moderate — OpenTelemetry.Exporter.OpenTelemetryProtocol

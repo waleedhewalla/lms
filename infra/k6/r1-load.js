@@ -34,12 +34,17 @@ export function setup() {
   check(r, { 'seed tenant 201': (x) => x.status === 201 });
   const tid = r.json('id');
   // scoped token: tenant claim must equal the tenant row id
-  r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: 'k6', tenantId: tid, permissions: PERMS }), { headers: h });
-  return { token: r.json('token'), tenantId: tid };
+  // One identity per virtual user: real traffic comes from many users, and the API rate-limits per user.
+  const tokens = [];
+  for (let vu = 1; vu <= 20; vu++) {
+    r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: `k6-vu-${vu}`, tenantId: tid, permissions: PERMS }), { headers: h });
+    tokens.push(r.json('token'));
+  }
+  return { tokens, tenantId: tid };
 }
 
 export default function (data) {
-  const auth = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` } };
+  const auth = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.tokens[(__VU - 1) % data.tokens.length]}` } };
   const t = data.tenantId;
   const pick = Math.random();
   let r;

@@ -37,6 +37,11 @@ spec:
             - name: Storage__SecretKey
               valueFrom: { secretKeyRef: { name: edunexus-minio, key: root-password } }
             - { name: Cors__AllowedOrigins, value: {{ .Values.web.publicUrl | quote }} }
+            - { name: RateLimiting__PermitsPerMinute, value: {{ .Values.api.rateLimiting.permitsPerMinute | quote }} }
+            - { name: RateLimiting__ExpensivePermitsPerMinute, value: {{ .Values.api.rateLimiting.expensivePermitsPerMinute | quote }} }
+            {{- range $i, $cidr := splitList "," .Values.api.trustedProxyNetworks }}
+            - { name: ForwardedHeaders__KnownNetworks__{{ $i }}, value: {{ trim $cidr | quote }} }
+            {{- end }}
             - { name: AI__Provider, value: {{ .Values.api.ai.provider | quote }} }
             - { name: AI__BaseUrl, value: {{ .Values.api.ai.baseUrl | quote }} }
             - { name: AI__Model, value: {{ .Values.api.ai.model | quote }} }

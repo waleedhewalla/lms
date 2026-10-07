@@ -25,5 +25,8 @@ public sealed class EduNexusFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        // The suite fires bursts of calls as one test identity; dedicated tests cover the limiter with low limits.
+        builder.UseSetting("RateLimiting:PermitsPerMinute", "100000");
+        builder.UseSetting("RateLimiting:ExpensivePermitsPerMinute", "100000");
     }
 }

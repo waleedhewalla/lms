@@ -41,6 +41,8 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **Webhook SSRF guard:** checks at registration and again at connect time; no redirects; random signing secrets.
 - **Storage keys:** keys sent by clients must sit under the tenant's own prefix.
 - **Web hardening:** per-request Content-Security-Policy, and a stricter same-origin check on the post-sign-in redirect.
+- **Rate limiting in the API:** 600 requests a minute per user (per IP when anonymous), plus 60 a minute for AI, search, exports and token minting. Over-limit calls get 429 with `Retry-After`.
+- **Trusted proxies:** `X-Forwarded-For` is honoured only from private-network proxies, so callers can't spoof their IP. `/metrics` answers internal callers only.
 - **Duplicate votes:** a second vote on the same agenda item now returns 409 instead of a 500.
 - **Load test:** 0% errors at 10 virtual users. R1 baseline p95 7.9 ms; R2–R5 write mix p95 16.9 ms.
 - **Pen-test:** scope document `docs/03-architecture/PENTEST-SCOPE.md`.
@@ -48,4 +50,4 @@ Feature-complete release of the delivery plan (Waves A–G).
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
-- There is no API rate limiting; set it at the ingress or proxy.
+- Rate limits are kept in memory per API instance. With several replicas, the effective limit is the per-instance limit times the replica count.
