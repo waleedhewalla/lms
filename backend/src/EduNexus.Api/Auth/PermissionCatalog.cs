@@ -35,6 +35,7 @@ public static class PermissionCatalog
         "role:assign", "role:create", "role:read",
         "search:read",
         "sla:manage",
+        "records:read", "records:manage", "records:approve", "records:hold",
         "strategy:manage", "strategy:read",
         "task:create", "task:read", "task:update", "task:verify",
         "tenant:create", "tenant:read",

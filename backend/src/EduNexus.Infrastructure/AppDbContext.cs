@@ -73,6 +73,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<DecisionActionEvidence> DecisionActionEvidences => Set<DecisionActionEvidence>();
     public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
     public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
+    public DbSet<RetentionSchedule> RetentionSchedules => Set<RetentionSchedule>();
+    public DbSet<RecordHold> RecordHolds => Set<RecordHold>();
+    public DbSet<DisposalBatch> DisposalBatches => Set<DisposalBatch>();
+    public DbSet<DisposalItem> DisposalItems => Set<DisposalItem>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -517,6 +521,48 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => new { x.TenantId, x.PersonId, x.Channel }).IsUnique();
             e.Property(x => x.Channel).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.MinPriority).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<RetentionSchedule>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(300).IsRequired();
+            e.Property(x => x.EntityType).HasMaxLength(50).IsRequired();
+            e.Property(x => x.RecordClass).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Disposition).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.LegalReference).HasMaxLength(500);
+        });
+        b.Entity<RecordHold>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
+            e.Property(x => x.EntityType).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.PlacedBy).HasMaxLength(200).IsRequired();
+            e.Property(x => x.ReleasedBy).HasMaxLength(200);
+            e.Ignore(x => x.IsActive);
+        });
+        b.Entity<DisposalBatch>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Status });
+            e.Property(x => x.Disposition).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ProposedBy).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DecidedBy).HasMaxLength(200);
+            e.Property(x => x.DecisionNote).HasMaxLength(1000);
+        });
+        b.Entity<DisposalItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.BatchId });
+            e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
+            e.Property(x => x.EntityType).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Reference).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Outcome).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Note).HasMaxLength(1000);
         });
     }
 }

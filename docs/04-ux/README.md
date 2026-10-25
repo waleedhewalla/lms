@@ -27,6 +27,7 @@ show an accessible error banner (`role=alert`) and empty states, and hide action
 | `/reports` | UX-RPT-001 Reports & dashboards | Executive KPIs, governance KPIs, reports, CSV export |
 | `/intelligence` | UX-AI-001 Intelligence | RAG Q&A, search, institutional memory |
 | `/directory`, `/roles`, `/audit` | UX-DIR-001, UX-ADM-001, UX-AUD-001 | People, role assignment, audit trail |
+| `/records` | UX-REC-001 Records retention | Retention schedules, eligibility preview, legal holds, disposal batches (separate approver), manifest |
 | `/settings` | UX-ADM-002 Settings | My account/permissions, notification preferences, SLA policies |
 
 Dates: every screen formats dates through `fmtDate`/`fmtDay` (`frontend/lib/dates.ts`) in the viewer's

@@ -175,6 +175,7 @@ app.MapWorkEndpoints();
 app.MapReportEndpoints();
 app.MapGovernanceDepthEndpoints();
 app.MapAiGovernanceEndpoints();
+app.MapRecordsEndpoints();
 
 if (args.Contains("--migrate-only"))
 {

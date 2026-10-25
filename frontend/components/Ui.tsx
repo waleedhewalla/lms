@@ -1,5 +1,5 @@
 "use client";
-import { ReactNode, useEffect, useState } from "react";
+import { Children, ReactElement, ReactNode, cloneElement, isValidElement, useEffect, useId, useState } from "react";
 import { useTranslation } from "./TranslationProvider";
 import { ConnectionBar } from "./ConnectionBar";
 import { CalendarMode, currentUiLocale, formatDate, getCalendarMode, hijriForInput } from "../lib/dates";
@@ -97,11 +97,20 @@ export function Table<T>({ rows, columns, empty, onRowClick }: {
   );
 }
 
+/** Labelled form field. The label is tied to the first input/select/textarea so screen readers announce it. */
 export function Field({ label, children }: { label: string; children: ReactNode }) {
+  const generated = useId();
+  let controlId: string | undefined;
+  const linked = Children.map(children, (child) => {
+    if (controlId || !isValidElement(child) || !["input", "select", "textarea"].includes(child.type as string)) return child;
+    const props = child.props as { id?: string };
+    controlId = props.id ?? generated;
+    return props.id ? child : cloneElement(child as ReactElement<{ id?: string }>, { id: controlId });
+  });
   return (
     <div className="form-group" style={{ margin: 0 }}>
-      <label>{label}</label>
-      {children}
+      <label htmlFor={controlId}>{label}</label>
+      {linked}
     </div>
   );
 }
