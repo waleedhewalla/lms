@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
-import { useTenant } from "../../components/Ui";
+import { fmtDay, useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 
 type DocumentActionRule = {
@@ -290,7 +290,7 @@ export default function IntelligencePage() {
                         <span>Action: <b className="badge">{item.policy.dispositionAction}</b></span>
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '0.25rem' }}>
-                        Review Due: {new Date(item.policy.nextReviewDueAt).toLocaleDateString()}
+                        Review Due: {fmtDay(item.policy.nextReviewDueAt)}
                       </div>
                     </div>
                   ))}

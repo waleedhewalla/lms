@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api, apiBase, authHeaders } from "../../lib/api";
-import { Card, Field, Page, Table, attempt, fmtDate, useL, useTenant } from "../../components/Ui";
+import { attempt, Card, Field, fmtDate, HijriHint, Page, Table, useL, useTenant } from "../../components/Ui";
 
 type Item = { id: string; title: string; kind: string; startsAt: string; endsAt: string; location: string | null; sourceType: string };
 const KINDS = ["Meeting", "Deadline", "PolicyReview", "Exam", "Training", "Holiday", "Other"];
@@ -59,8 +59,8 @@ export default function CalendarPage() {
             <Field label={L("Title", "العنوان")}><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
             <Field label={L("Kind", "النوع")}>
               <select className="input" value={kind} onChange={(e) => setKind(e.target.value)}>{KINDS.map((k) => <option key={k}>{k}</option>)}</select></Field>
-            <Field label={L("Starts", "البداية")}><input className="input" type="datetime-local" value={starts} onChange={(e) => setStarts(e.target.value)} /></Field>
-            <Field label={L("Ends", "النهاية")}><input className="input" type="datetime-local" value={ends} onChange={(e) => setEnds(e.target.value)} /></Field>
+            <Field label={L("Starts", "البداية")}><input className="input" type="datetime-local" value={starts} onChange={(e) => setStarts(e.target.value)} /><HijriHint value={starts} /></Field>
+            <Field label={L("Ends", "النهاية")}><input className="input" type="datetime-local" value={ends} onChange={(e) => setEnds(e.target.value)} /><HijriHint value={ends} /></Field>
             <Field label={L("Location", "المكان")}><input className="input" value={location} onChange={(e) => setLocation(e.target.value)} /></Field>
             <button className="btn" disabled={!title || !starts} onClick={create}>{L("Add", "إضافة")}</button>
           </div>

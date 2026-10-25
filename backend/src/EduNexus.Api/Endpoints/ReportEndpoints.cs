@@ -152,14 +152,20 @@ public static class ReportEndpoints
             return Results.Ok(await report(db, tenantId, ct));
         });
 
-        reports.MapGet("/{code}/export", async (AppDbContext db, HttpContext ctx, string code, Guid tenantId, CancellationToken ct) =>
+        // calendar: omit (Gregorian ISO dates), "both" (adds a <column>_hijri Umm al-Qura column per date column)
+        // or "hijri" (date columns rendered in Umm al-Qura). Official Saudi reports are commonly dated in Hijri.
+        reports.MapGet("/{code}/export", async (AppDbContext db, HttpContext ctx, IConfiguration config, string code, Guid tenantId, string? calendar, CancellationToken ct) =>
         {
+            var mode = (calendar ?? "gregorian").Trim().ToLowerInvariant();
+            if (mode is not ("gregorian" or "hijri" or "both"))
+                return Results.BadRequest(new { error = "calendar must be gregorian, hijri or both." });
             if (!ctx.User.HasPermission("analytics:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             if (!Tabular.TryGetValue(code, out var report)) return Results.NotFound(new { error = $"Unknown report '{code}'.", available = Tabular.Keys });
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var rows = await report(db, tenantId, ct);
-            var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(ToCsv(rows))).ToArray();
+            var offset = TimeSpan.FromHours(config.GetValue("Calendar:UtcOffsetHours", 3.0));
+            var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(ToCsv(WithCalendar(rows, mode, offset)))).ToArray();
             return Results.File(bytes, "text/csv; charset=utf-8", $"{code.ToLowerInvariant()}-{DateTime.UtcNow:yyyyMMdd}.csv");
         });
     }
@@ -303,6 +309,25 @@ public static class ReportEndpoints
             ["acknowledgements"] = acks.GetValueOrDefault(p.Id),
             ["acknowledgementPct"] = p.Status != PolicyStatus.Published || activePeople == 0
                 ? null : Math.Round(100.0 * acks.GetValueOrDefault(p.Id) / activePeople, 1),
+        }).ToList();
+    }
+
+    /// <summary>Adds or substitutes Umm al-Qura dates for every column that holds dates.</summary>
+    internal static List<Dictionary<string, object?>> WithCalendar(List<Dictionary<string, object?>> rows, string mode, TimeSpan offset)
+    {
+        if (mode == "gregorian" || rows.Count == 0) return rows;
+        var dateColumns = rows[0].Keys.Where(k => rows.Any(r => r.GetValueOrDefault(k) is DateTimeOffset)).ToList();
+        return rows.Select(row =>
+        {
+            var copy = new Dictionary<string, object?>();
+            foreach (var (key, value) in row)
+            {
+                var hijri = value is DateTimeOffset d ? HijriDate.Format(d, offset) : null;
+                if (mode == "hijri" && dateColumns.Contains(key)) { copy[key] = hijri; continue; }
+                copy[key] = value;
+                if (dateColumns.Contains(key)) copy[key + "_hijri"] = hijri;
+            }
+            return copy;
         }).ToList();
     }
 

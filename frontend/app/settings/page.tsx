@@ -1,5 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { CALENDAR_MODES, CalendarMode, formatDate, getCalendarMode, setCalendarMode } from "../../lib/dates";
+import { useTranslation } from "../../components/TranslationProvider";
 import { api } from "../../lib/api";
 import { Card, Field, Page, Table, attempt, useL, useTenant } from "../../components/Ui";
 
@@ -10,6 +12,12 @@ const PRIORITIES = ["FYI", "Normal", "Important", "Urgent", "Emergency"];
 
 export default function SettingsPage() {
   const L = useL();
+  const { locale } = useTranslation();
+  const [calendar, setCalendar] = useState<CalendarMode>("gregorian");
+  useEffect(() => setCalendar(getCalendarMode(locale)), [locale]);
+  const calendarLabel: Record<CalendarMode, string> = {
+    gregorian: L("Gregorian", "ميلادي"), hijri: L("Hijri (Umm al-Qura)", "هجري (أم القرى)"), both: L("Both", "كلاهما"),
+  };
   const [tenantId, setTenantId] = useTenant();
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
@@ -42,6 +50,20 @@ export default function SettingsPage() {
       actions={<button className="btn" onClick={load}>{L("Load", "تحميل")}</button>}>
       {ok && <p role="status" style={{ color: "var(--primary)" }}>{ok}</p>}
       <div className="card-grid">
+        <Card title={L("Date display", "عرض التاريخ")}>
+          <Field label={L("Calendar", "التقويم")}>
+            <select className="input" value={calendar} onChange={(e) => {
+              const mode = e.target.value as CalendarMode;
+              setCalendarMode(mode); setCalendar(mode);
+            }}>
+              {CALENDAR_MODES.map((m) => <option key={m} value={m}>{calendarLabel[m]}</option>)}
+            </select>
+          </Field>
+          <p style={{ marginBottom: 0 }}>{L("Today", "اليوم")}: <strong>{formatDate(new Date(), { mode: calendar, locale, time: false })}</strong></p>
+          <p style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+            {L("Applies to every date in the app on this device. Report exports can add Hijri columns.",
+               "يُطبَّق على جميع التواريخ في هذا الجهاز. ويمكن لتصدير التقارير إضافة أعمدة بالتاريخ الهجري.")}</p>
+        </Card>
         <Card title={L("My account", "حسابي")}>
           {!me ? <p style={{ opacity: 0.7 }}>{L("Load to see your account.", "حمّل لعرض حسابك.")}</p> : (<>
             <p style={{ marginTop: 0 }}>{L("Person", "الشخص")}: <strong>{me.person?.fullName ?? L("not linked", "غير مرتبط")}</strong></p>

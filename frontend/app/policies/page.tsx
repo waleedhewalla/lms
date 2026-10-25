@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api } from "../../lib/api";
-import { Card, Field, Page, Table, attempt, fmtDate, useL, useTenant } from "../../components/Ui";
+import { attempt, Card, Field, fmtDate, HijriHint, Page, Table, useL, useTenant } from "../../components/Ui";
 
 type Policy = { id: string; code: string; title: string; content: string; status: string; version: number; nextReviewAt: string | null };
 type Version = { id: string; version: number; title: string; changeNote: string | null; createdAt: string };
@@ -89,7 +89,7 @@ export default function PoliciesPage() {
                   onClick={() => post(`/api/policies/${detail.policy.id}/versions`, { title: null, content: revision, changeNote: note || null, nextReviewAt: null })}>
                   {L("Save new version", "حفظ نسخة جديدة")}</button>
                 <Field label={L("Schedule next review", "جدولة المراجعة القادمة")}>
-                  <input className="input" type="date" value={review} onChange={(e) => setReview(e.target.value)} /></Field>
+                  <input className="input" type="date" value={review} onChange={(e) => setReview(e.target.value)} /><HijriHint value={review} /></Field>
                 <button className="btn btn-secondary" style={{ marginTop: "0.5rem" }} disabled={!review}
                   onClick={() => post(`/api/policies/${detail.policy.id}/review-schedule`, { nextReviewAt: new Date(review).toISOString(), ownerId: null })}>
                   {L("Schedule", "جدولة")}</button>

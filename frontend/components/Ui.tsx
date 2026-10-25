@@ -2,6 +2,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "./TranslationProvider";
 import { ConnectionBar } from "./ConnectionBar";
+import { CalendarMode, currentUiLocale, formatDate, getCalendarMode, hijriForInput } from "../lib/dates";
 
 /** Inline bilingual text: L("Save", "حفظ"). */
 export function useL() {
@@ -105,7 +106,26 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString() : "–");
+/** Date + time in the viewer's calendar preference (Gregorian, Hijri Umm al-Qura, or both). */
+export const fmtDate = (s?: string | null) => {
+  const locale = currentUiLocale();
+  return formatDate(s, { mode: typeof window === "undefined" ? "gregorian" : getCalendarMode(locale), locale });
+};
+
+/** Date only, same calendar preference. */
+export const fmtDay = (s?: string | null) => {
+  const locale = currentUiLocale();
+  return formatDate(s, { mode: typeof window === "undefined" ? "gregorian" : getCalendarMode(locale), locale, time: false });
+};
+
+/** Shows the Hijri equivalent under a date / datetime-local input when the viewer uses Hijri dates. */
+export function HijriHint({ value }: { value: string }) {
+  const { locale } = useTranslation();
+  const [mode, setMode] = useState<CalendarMode>("gregorian");
+  useEffect(() => setMode(getCalendarMode(locale)), [locale]);
+  const hijri = mode === "gregorian" ? "" : hijriForInput(value, locale);
+  return hijri ? <span style={{ fontSize: "0.8rem", opacity: 0.75 }} aria-live="polite">{hijri}</span> : null;
+}
 
 /** Runs an async action, reporting errors through setError. */
 export async function attempt(setError: (e: string) => void, fn: () => Promise<void>) {

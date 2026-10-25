@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
-import { useTenant } from "../../components/Ui";
+import { fmtDate, useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 import { Chatter } from "../../components/Chatter";
 
@@ -63,7 +63,7 @@ export default function ApprovalsPage() {
                   background: selectedId === a.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent'
                 }}
               >
-                <strong>{a.entityType}</strong> <span className="badge">[{a.priority}]</span> due {new Date(a.dueAt).toLocaleString()}
+                <strong>{a.entityType}</strong> <span className="badge">[{a.priority}]</span> due {fmtDate(a.dueAt)}
                 <button className="btn" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', marginLeft: '0.5rem' }} onClick={(e) => { e.stopPropagation(); decide(a.id, true); }}>{t("page.apr.approve")}</button>
                 <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', marginLeft: '0.5rem' }} onClick={(e) => { e.stopPropagation(); decide(a.id, false); }}>{t("page.apr.reject")}</button>
               </li>

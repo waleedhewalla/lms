@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api, apiBase, authHeaders } from "../../lib/api";
+import { currentUiLocale, getCalendarMode } from "../../lib/dates";
 import { Card, Kpi, Page, Table, attempt, useL, useTenant } from "../../components/Ui";
 
 type Governance = {
@@ -36,7 +37,9 @@ export default function ReportsPage() {
     setRows(await api<Row[]>(`/api/reports/${c}?tenantId=${tenantId}`));
   });
   const exportCsv = () => attempt(setErr, async () => {
-    const res = await fetch(`${apiBase()}/api/reports/${code}/export?tenantId=${tenantId}`, { headers: authHeaders() });
+    // Exports carry Hijri (Umm al-Qura) dates too when the viewer uses them.
+    const calendar = getCalendarMode(currentUiLocale());
+    const res = await fetch(`${apiBase()}/api/reports/${code}/export?tenantId=${tenantId}&calendar=${calendar}`, { headers: authHeaders() });
     if (!res.ok) throw new Error(`export → ${res.status}`);
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");

@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api } from "../../lib/api";
-import { Card, Field, Page, Table, attempt, fmtDate, useL, useTenant } from "../../components/Ui";
+import { attempt, Card, Field, fmtDate, HijriHint, Page, Table, useL, useTenant } from "../../components/Ui";
 
 type Decision = { id: string; text: string; status: string; publishedAt: string; meetingId: string };
 type Action = { id: string; assigneeId: string; description: string; status: string; dueAt: string };
@@ -81,7 +81,7 @@ export default function DecisionsPage() {
               <Field label={L("Evidence file name", "اسم ملف الدليل")}><input className="input" value={fileName} onChange={(e) => setFileName(e.target.value)} /></Field>
               <Field label={L("New action: assignee ID", "إجراء جديد: المكلّف")}><input className="input" value={assignee} onChange={(e) => setAssignee(e.target.value)} /></Field>
               <Field label={L("Description", "الوصف")}><input className="input" value={desc} onChange={(e) => setDesc(e.target.value)} /></Field>
-              <Field label={L("Due", "الاستحقاق")}><input className="input" type="date" value={due} onChange={(e) => setDue(e.target.value)} /></Field>
+              <Field label={L("Due", "الاستحقاق")}><input className="input" type="date" value={due} onChange={(e) => setDue(e.target.value)} /><HijriHint value={due} /></Field>
             </div>
             <button className="btn" style={{ marginTop: "0.75rem" }} disabled={!assignee || !desc}
               onClick={() => post(`/api/decisions/${detail.decision.id}/actions`, { assigneeId: assignee, description: desc, dueAt: due ? new Date(due).toISOString() : null })}>

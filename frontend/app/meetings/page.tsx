@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
-import { useTenant } from "../../components/Ui";
+import { fmtDate, fmtDay, useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 import { Chatter } from "../../components/Chatter";
 
@@ -266,7 +266,7 @@ export default function MeetingsPage() {
                       <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{m.title}</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.4rem', fontSize: '0.8rem' }}>
                         <span className="badge">[{m.status}]</span>
-                        <span style={{ opacity: 0.5 }}>{new Date(m.startsAt).toLocaleDateString()}</span>
+                        <span style={{ opacity: 0.5 }}>{fmtDay(m.startsAt)}</span>
                       </div>
                     </div>
                   );
@@ -325,7 +325,7 @@ export default function MeetingsPage() {
                   <div>
                     <h2 style={{ margin: '0 0 0.5rem 0' }}>{meetingDetail.meeting.title}</h2>
                     <div style={{ display: 'flex', gap: '1rem', opacity: 0.8, fontSize: '0.85rem' }}>
-                      <span>Starts: {new Date(meetingDetail.meeting.startsAt).toLocaleString()}</span>
+                      <span>Starts: {fmtDate(meetingDetail.meeting.startsAt)}</span>
                       <span>Status: <b className="badge">[{meetingDetail.meeting.status}]</b></span>
                     </div>
                     <div style={{ marginTop: '0.75rem' }}>
@@ -553,7 +553,7 @@ export default function MeetingsPage() {
                 </span>
                 <h2 style={{ margin: 0 }}>{packetData.meeting.title}</h2>
                 <p style={{ margin: '0.25rem 0 0 0', opacity: 0.7, fontSize: '0.85rem' }}>
-                  Committee: <b>{packetData.committee?.name ?? "Board"}</b> • Convened: {new Date(packetData.meeting.startsAt).toLocaleString()}
+                  Committee: <b>{packetData.committee?.name ?? "Board"}</b> • Convened: {fmtDate(packetData.meeting.startsAt)}
                 </p>
               </div>
               <button className="btn btn-secondary" onClick={() => setPacketModalOpen(false)}>✕ Close</button>
