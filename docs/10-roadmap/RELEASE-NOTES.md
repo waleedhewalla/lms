@@ -63,6 +63,10 @@ Feature-complete release of the delivery plan (Waves A–G).
 - New **Records Retention** screen, a records-officers Keycloak group, and four new permissions (`records:read|manage|approve|hold`).
 - Field labels are now linked to their inputs, for screen readers.
 
+## Wave H, part 3: NCA / PDPL readiness
+- `docs/03-architecture/NCA-PDPL-MAPPING.md` maps the product against NCA ECC-2:2024 (by domain), CCC-2:2024 and data location, and the PDPL. Each item is marked built in, configure, operator responsibility, or gap. It also includes a 72-hour breach runbook, a personal-data inventory, and a gap backlog (G1–G6).
+- Multi-factor authentication is **on by default** in the Keycloak realm: users enrol an authenticator app at first sign-in and enter a code at every sign-in.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

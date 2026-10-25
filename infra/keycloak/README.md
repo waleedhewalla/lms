@@ -37,6 +37,7 @@ This runbook documents the configuration patterns for integrating EduNexus OS V2
   | `edunexus-readonly` | Every `:read` permission |
 
 - **Declared user profile:** `tenant_id` and `person_id` hold GUIDs that only admins can edit.
+- **Multi-factor authentication, on by default:** every new user must enrol an authenticator app (TOTP) at first sign-in. Keycloak's standard browser flow then asks for the code at every sign-in. This meets NCA ECC-2:2024's MFA requirement. To require it only for administrators, untick "Default action" on *Configure OTP* (Authentication → Required actions) and add the action to admin users or groups instead. This was verified in a browser: forced setup at first login, then a code requested at the next login.
 - **Security settings:**
   - brute-force lockout;
   - password policy: at least 12 characters, not the username or email, last 5 passwords can't be reused;
