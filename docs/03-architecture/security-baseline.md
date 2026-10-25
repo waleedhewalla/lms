@@ -21,6 +21,9 @@
 - CORS restricted to configured origins; production refuses dev auth; non-root containers.
 - Rate limiting in the API (2026-10-07): fixed window per user+tenant (per IP when anonymous), default 600/min,
   plus 60/min for AI, search, exports and token minting; 429 + `Retry-After`. Load tests run with it on: 0% errors.
+- npm advisories published after 2026-10-06 (caught by the CI gate on 2026-10-25): Next.js 15.5.28 fixes
+  GHSA-2464-fhr4-w9xw (critical, unauthenticated RCE via image optimization with SVG) and a Server Actions DoS;
+  sharp ≥ 0.35.5 via override; unused `puppeteer` dev dependency removed (zod/chromium-bidi chain).
 - `X-Forwarded-*` trusted only from private-network proxies (configurable), closing IP spoofing that the
   earlier "trust everyone" setting allowed. `/metrics` answers only loopback/private callers.
 
