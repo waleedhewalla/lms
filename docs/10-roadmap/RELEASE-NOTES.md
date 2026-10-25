@@ -53,6 +53,16 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Report CSV exports accept `?calendar=hijri|both`, which substitutes or adds Umm al-Qura date columns computed in Saudi time.
 - Fix: the interface language could revert to English after a quick reload. It is now saved only when the user changes it.
 
+## Wave H, part 2: records retention and disposal
+- Retention schedules per record type (correspondence, documents), with a record class, retention period, outcome (destroy, transfer to the National Center for Archives and Records, or keep permanently) and legal reference.
+- Legal holds keep a record out of disposal, including holds placed after a batch was proposed.
+- Disposal batches: proposed by a records officer and approved by a **different** person.
+  - Destroying correspondence redacts its content and keeps the register entry.
+  - Destroying a document deletes its stored files and **confirms** the deletion; anything unconfirmed stays "storage pending" and can be retried.
+- A CSV manifest with Hijri dates serves as the disposal certificate or archive handover list.
+- New **Records Retention** screen, a records-officers Keycloak group, and four new permissions (`records:read|manage|approve|hold`).
+- Field labels are now linked to their inputs, for screen readers.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

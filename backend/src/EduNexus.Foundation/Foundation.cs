@@ -425,3 +425,70 @@ public sealed record NotificationPreference(
         return !quiet;
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// Wave H — records retention & disposal (Saudi Law of Documents and Archives: classified records, retention
+// periods, supervised disposal, transfer to the National Center for Archives and Records).
+// ---------------------------------------------------------------------------------------------------------
+
+public enum RecordClass { Administrative, Financial, Specialized }
+public enum Disposition { Destroy, TransferToArchive, Permanent }
+
+/// <summary>How long one kind of record is kept and what happens after. RetentionYears is null for Permanent.</summary>
+public sealed record RetentionSchedule(
+    Guid Id, Guid TenantId, string Code, string Name, string EntityType, RecordClass RecordClass,
+    int? RetentionYears, Disposition Disposition, string? LegalReference, bool IsActive);
+
+/// <summary>A legal/administrative hold: a held record is never disposed while the hold is active.</summary>
+public sealed record RecordHold(
+    Guid Id, Guid TenantId, string EntityType, Guid EntityId, string Reason,
+    string PlacedBy, DateTimeOffset PlacedAt, string? ReleasedBy, DateTimeOffset? ReleasedAt)
+{
+    public bool IsActive => ReleasedAt is null;
+}
+
+public enum DisposalStatus { Proposed, Approved, Rejected, Executed, ExecutedWithErrors }
+
+/// <summary>A proposed disposal run for one schedule. Approval must come from someone other than the proposer.</summary>
+public sealed record DisposalBatch(
+    Guid Id, Guid TenantId, Guid ScheduleId, Disposition Disposition, DisposalStatus Status,
+    string ProposedBy, DateTimeOffset ProposedAt, string? DecidedBy, DateTimeOffset? DecidedAt,
+    string? DecisionNote, DateTimeOffset? ExecutedAt);
+
+public enum DisposalOutcome { Pending, Destroyed, Transferred, SkippedHold, StoragePending }
+
+/// <summary>One record in a batch. Kept forever: together these rows are the disposal register.</summary>
+public sealed record DisposalItem(
+    Guid Id, Guid TenantId, Guid BatchId, string EntityType, Guid EntityId, string Reference, string Title,
+    DateTimeOffset RecordDate, DateTimeOffset EligibleAt, DisposalOutcome Outcome,
+    DateTimeOffset? ProcessedAt, string? Note);
+
+public static class RetentionRules
+{
+    /// <summary>Record types a schedule can govern.</summary>
+    public static readonly string[] EntityTypes = ["Correspondence", "Document"];
+
+    /// <summary>
+    /// When a record becomes eligible for disposal: its record date plus the retention period, but never
+    /// before an explicit retain-until date. Null means never (permanent records).
+    /// </summary>
+    public static DateTimeOffset? EligibleAt(DateTimeOffset recordDate, int? retentionYears, Disposition disposition, DateTimeOffset? retainUntil = null)
+    {
+        if (disposition == Disposition.Permanent || retentionYears is null) return null;
+        var byPeriod = recordDate.AddYears(retentionYears.Value);
+        return retainUntil is { } until && until > byPeriod ? until : byPeriod;
+    }
+
+    /// <summary>Only finished correspondence may be disposed; drafts and items in flight are still working records.</summary>
+    public static bool IsClosed(CorrespondenceStatus status) =>
+        status is CorrespondenceStatus.Approved or CorrespondenceStatus.Rejected or CorrespondenceStatus.Archived;
+
+    public static string? Validate(string code, string name, string entityType, int? retentionYears, Disposition disposition)
+    {
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name)) return "Code and name are required.";
+        if (!EntityTypes.Contains(entityType)) return $"EntityType must be one of: {string.Join(", ", EntityTypes)}.";
+        if (disposition == Disposition.Permanent && retentionYears is not null) return "Permanent records have no retention period.";
+        if (disposition != Disposition.Permanent && retentionYears is not (>= 1 and <= 100)) return "RetentionYears must be 1–100.";
+        return null;
+    }
+}

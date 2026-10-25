@@ -24,6 +24,10 @@
 - npm advisories published after 2026-10-06 (caught by the CI gate on 2026-10-25): Next.js 15.5.28 fixes
   GHSA-2464-fhr4-w9xw (critical, unauthenticated RCE via image optimization with SVG) and a Server Actions DoS;
   sharp ≥ 0.35.5 via override; unused `puppeteer` dev dependency removed (zod/chromium-bidi chain).
+- Records disposal (Wave H): separation of duties (the proposer cannot decide), legal holds re-checked at execution,
+  disposal register kept forever. Finding: the MinIO .NET SDK's remove/stat calls returned without error against an
+  unreachable server, so deletions are now confirmed independently (a signed GET must return 404) before a record is
+  reported destroyed. Other SDK calls (e.g. EnsureBucket) may hide failures the same way; worth a follow-up.
 - `X-Forwarded-*` trusted only from private-network proxies (configurable), closing IP spoofing that the
   earlier "trust everyone" setting allowed. `/metrics` answers only loopback/private callers.
 

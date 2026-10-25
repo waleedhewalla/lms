@@ -167,6 +167,10 @@
           "policy:read",
           "quality:manage",
           "quality:read",
+          "records:approve",
+          "records:hold",
+          "records:manage",
+          "records:read",
           "request:create",
           "request:read",
           "role:assign",
@@ -250,6 +254,10 @@
           "policy:read",
           "quality:manage",
           "quality:read",
+          "records:approve",
+          "records:hold",
+          "records:manage",
+          "records:read",
           "request:create",
           "request:read",
           "role:assign",
@@ -315,6 +323,9 @@
           "policy:create",
           "policy:read",
           "quality:read",
+          "records:approve",
+          "records:hold",
+          "records:read",
           "request:create",
           "request:read",
           "search:read",
@@ -382,6 +393,28 @@
         ]
       },
       "subGroups": []
+    },
+    {
+      "name": "edunexus-records-officers",
+      "path": "/edunexus-records-officers",
+      "subGroups": [],
+      "attributes": {
+        "description": [
+          "Records officers: retention schedules, legal holds, propose and execute disposal (approval needs another person)."
+        ],
+        "permission": [
+          "correspondence:read",
+          "document:read",
+          "inbox:read",
+          "notification:read",
+          "org:read",
+          "person:read",
+          "records:hold",
+          "records:manage",
+          "records:read",
+          "search:read"
+        ]
+      }
     },
     {
       "name": "edunexus-staff",
@@ -452,6 +485,7 @@
           "person:read",
           "policy:read",
           "quality:read",
+          "records:read",
           "request:read",
           "role:read",
           "search:read",

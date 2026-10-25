@@ -2137,5 +2137,122 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal("1448-05-14", hijri[0]["dueAt"]);
         Assert.Same(rows, EduNexus.Api.Endpoints.ReportEndpoints.WithCalendar(rows, "gregorian", TimeSpan.FromHours(3)));
     }
+    [Fact]
+    public async Task WaveH_Records_Retention_Holds_Disposal_With_Segregation_Of_Duties()
+    {
+        var tenant = Guid.NewGuid();
+        var tokens = factory.Services.GetRequiredService<DevTokenService>();
+        HttpClient As(string subject, params string[] perms)
+        {
+            var c = factory.CreateClient();
+            Auth(c, tokens.Mint(subject, tenant, perms));
+            return c;
+        }
+        var officer = As("records-officer", "records:read", "records:manage", "records:hold");
+        var approver = As("records-approver", "records:read", "records:approve");
+
+        // Seed records directly with back-dated creation (the test DB role bypasses RLS).
+        var old = DateTimeOffset.UtcNow.AddYears(-12);
+        Correspondence Letter(string number, CorrespondenceStatus status, DateTimeOffset created) =>
+            new(Guid.NewGuid(), tenant, number, CorrespondenceType.Outgoing, $"Subject {number}", "Sensitive body text",
+                Guid.NewGuid(), CorrespondencePriority.Normal, false, status, created);
+        var oldClosed = Letter("OUT-1", CorrespondenceStatus.Approved, old);
+        var oldDraft = Letter("OUT-2", CorrespondenceStatus.Draft, old);
+        var recent = Letter("OUT-3", CorrespondenceStatus.Approved, DateTimeOffset.UtcNow.AddYears(-1));
+        var oldHeld = Letter("OUT-4", CorrespondenceStatus.Archived, old);
+        var doc = new Document(Guid.NewGuid(), tenant, "Old procurement file", DocumentStatus.Published, 1);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Correspondences.AddRange(oldClosed, oldDraft, recent, oldHeld);
+            db.Documents.Add(doc);
+            db.DocumentVersions.Add(new DocumentVersion(Guid.NewGuid(), tenant, doc.Id, 1, $"{tenant}/{doc.Id}/v1.pdf", 10, "abc", old));
+            await db.SaveChangesAsync();
+        }
+
+        // Schedules: validation, uniqueness.
+        var sched = await officer.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "ADM-LTR", name = "Routine letters",
+            entityType = "Correspondence", recordClass = "Administrative", retentionYears = 10, disposition = "Destroy", legalReference = "Archives Law art. 7" });
+        Assert.Equal(HttpStatusCode.Created, sched.StatusCode);
+        var scheduleId = IdOf(await sched.Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.Conflict, (await officer.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "ADM-LTR", name = "x",
+            entityType = "Correspondence", recordClass = "Administrative", retentionYears = 5, disposition = "Destroy" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await officer.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "BAD", name = "x",
+            entityType = "Correspondence", recordClass = "Administrative", retentionYears = 5, disposition = "Permanent" })).StatusCode);
+
+        // A legal hold keeps a record out; drafts and recent records are not eligible.
+        Assert.Equal(HttpStatusCode.Created, (await officer.PostAsJsonAsync("/api/records/holds",
+            new { tenantId = tenant, entityType = "Correspondence", entityId = oldHeld.Id, reason = "Litigation 2026-17" })).StatusCode);
+        var eligible = await officer.GetFromJsonAsync<JsonElement>($"/api/records/schedules/{scheduleId}/eligible?tenantId={tenant}");
+        Assert.Equal(1, eligible.GetArrayLength());
+        Assert.Equal(oldClosed.Id, eligible[0].GetProperty("entityId").GetGuid());
+
+        // Propose, then segregation of duties on the decision.
+        var proposed = await officer.PostAsJsonAsync("/api/records/disposals", new { tenantId = tenant, scheduleId });
+        Assert.Equal(HttpStatusCode.Created, proposed.StatusCode);
+        var batchId = (await proposed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("batch").GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.Conflict, (await officer.PostAsJsonAsync("/api/records/disposals", new { tenantId = tenant, scheduleId })).StatusCode);
+        var selfApprove = As("records-officer", "records:approve");
+        Assert.Equal(HttpStatusCode.Forbidden, (await selfApprove.PostAsJsonAsync($"/api/records/disposals/{batchId}/approve", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await officer.PostAsJsonAsync($"/api/records/disposals/{batchId}/execute", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await approver.PostAsJsonAsync($"/api/records/disposals/{batchId}/approve", new { tenantId = tenant, note = "OK per policy" })).StatusCode);
+
+        // Execute: correspondence content is redacted, register entry kept.
+        var exec = await (await officer.PostAsJsonAsync($"/api/records/disposals/{batchId}/execute", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Executed", exec.GetProperty("batch").GetProperty("status").GetString());
+        Assert.Equal(1, exec.GetProperty("outcomes").GetProperty("Destroyed").GetInt32());
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var redacted = await db.Correspondences.AsNoTracking().SingleAsync(c => c.Id == oldClosed.Id);
+            Assert.StartsWith("[Destroyed ", redacted.Content);
+            Assert.Equal("OUT-1", redacted.Number);
+            Assert.Equal("Sensitive body text", (await db.Correspondences.AsNoTracking().SingleAsync(c => c.Id == oldHeld.Id)).Content);
+        }
+        var manifest = await (await officer.GetAsync($"/api/records/disposals/{batchId}/manifest.csv?tenantId={tenant}")).Content.ReadAsStringAsync();
+        Assert.Contains("OUT-1", manifest);
+        Assert.Contains("Destroyed", manifest);
+        Assert.Contains("recordDate_hijri", manifest);
+        Assert.Contains("records-approver", manifest);
+
+        // Documents: stored files must actually be deleted. Object storage is unreachable here, so the item is
+        // StoragePending (never reported destroyed while a copy remains) and the batch can be re-run.
+        var docSched = IdOf(await (await officer.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "DOC-5", name = "Procurement files",
+            entityType = "Document", recordClass = "Financial", retentionYears = 5, disposition = "Destroy" })).Content.ReadFromJsonAsync<JsonElement>());
+        var docBatch = (await (await officer.PostAsJsonAsync("/api/records/disposals", new { tenantId = tenant, scheduleId = docSched })).Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("batch").GetProperty("id").GetGuid();
+        await approver.PostAsJsonAsync($"/api/records/disposals/{docBatch}/approve", new { tenantId = tenant });
+        var docExec = await (await officer.PostAsJsonAsync($"/api/records/disposals/{docBatch}/execute", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("ExecutedWithErrors", docExec.GetProperty("batch").GetProperty("status").GetString());
+        Assert.Equal(1, docExec.GetProperty("outcomes").GetProperty("StoragePending").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await officer.PostAsJsonAsync($"/api/records/disposals/{docBatch}/execute", new { tenantId = tenant })).StatusCode);
+
+        // Transfer to the national archive; a hold placed after proposal blocks that record at execution.
+        var t1 = Letter("OUT-5", CorrespondenceStatus.Approved, old);
+        var t2 = Letter("OUT-6", CorrespondenceStatus.Approved, old);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Correspondences.AddRange(t1, t2);
+            await db.SaveChangesAsync();
+        }
+        var archSched = IdOf(await (await officer.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "ARC-LTR", name = "Letters of historical value",
+            entityType = "Correspondence", recordClass = "Specialized", retentionYears = 10, disposition = "TransferToArchive" })).Content.ReadFromJsonAsync<JsonElement>());
+        var archBatch = (await (await officer.PostAsJsonAsync("/api/records/disposals", new { tenantId = tenant, scheduleId = archSched })).Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("batch").GetProperty("id").GetGuid();
+        await officer.PostAsJsonAsync("/api/records/holds", new { tenantId = tenant, entityType = "Correspondence", entityId = t2.Id, reason = "Audit request" });
+        Assert.Equal(HttpStatusCode.BadRequest, (await approver.PostAsJsonAsync($"/api/records/disposals/{archBatch}/reject", new { tenantId = tenant })).StatusCode);
+        await approver.PostAsJsonAsync($"/api/records/disposals/{archBatch}/approve", new { tenantId = tenant });
+        var archExec = await (await officer.PostAsJsonAsync($"/api/records/disposals/{archBatch}/execute", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, archExec.GetProperty("outcomes").GetProperty("Transferred").GetInt32());
+        Assert.Equal(1, archExec.GetProperty("outcomes").GetProperty("SkippedHold").GetInt32());
+
+        // Tenant isolation and permissions.
+        var other = factory.CreateClient();
+        Auth(other, tokens.Mint("intruder", Guid.NewGuid(), ["records:read"]));
+        Assert.Equal(HttpStatusCode.Forbidden, (await other.GetAsync($"/api/records/schedules?tenantId={tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await approver.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "X", name = "x",
+            entityType = "Document", recordClass = "Administrative", retentionYears = 1, disposition = "Destroy" })).StatusCode);
+    }
 }
 
