@@ -35,6 +35,10 @@ Other IdPs: create a **public** client for the web app:
 | `Auth__Authority`, `Auth__Audience` | OIDC issuer and audience |
 | `Auth__EnableDevToken` | must be `false` in production |
 | `Cors__AllowedOrigins` | browser origin(s) of the web app, comma-separated. Unset outside Development = no cross-origin access |
+| `RateLimiting__PermitsPerMinute` | per signed-in user (per IP when anonymous); default 600. `RateLimiting__Enabled=false` turns limiting off |
+| `RateLimiting__ExpensivePermitsPerMinute` | extra budget for AI, search, exports and token minting; default 60 |
+| `ForwardedHeaders__KnownNetworks__0..n` | CIDRs of proxies whose `X-Forwarded-For` is trusted; default loopback + private ranges |
+| `Metrics__AllowExternal` | `/metrics` is served only to loopback/private callers unless `true` |
 | `RabbitMQ__Host/Port/Username/Password` | message broker |
 | `Storage__Endpoint/AccessKey/SecretKey/Bucket/Secure` | S3-compatible object storage |
 | `AI__OpenSearchUrl` | search / RAG index |

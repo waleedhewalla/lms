@@ -101,6 +101,8 @@ jobs:
           grep -q 'name: edunexus-web' /tmp/default.yaml
           grep -q 'kind: Ingress' /tmp/ingress.yaml
           ! grep -q 'CHANGEME' /tmp/default.yaml
+          grep -q 'RateLimiting__PermitsPerMinute' /tmp/default.yaml
+          grep -q 'ForwardedHeaders__KnownNetworks__2' /tmp/default.yaml
       - name: Keycloak realm import issues the claims the API expects
         run: |
           docker run -d --name kc -p 8081:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \

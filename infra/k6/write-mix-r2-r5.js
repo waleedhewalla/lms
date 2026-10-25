@@ -65,15 +65,20 @@ export function setup() {
   const agendaItemId = r.json('agenda.0.id');
 
   // Re-mint acting as the seeded person so person-scoped reads (inbox counts) resolve.
-  r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: 'k6-write-mix', tenantId: tid, permissions: PERMS, personId: authorId }), { headers: h });
-  const personToken = r.json('token');
+  // One identity per virtual user (all acting as the seeded person): real traffic comes from many users,
+  // and the API rate-limits per user.
+  const tokens = [];
+  for (let vu = 1; vu <= 20; vu++) {
+    r = http.post(`${BASE}/api/auth/dev-token`, JSON.stringify({ subject: `k6-wm-vu-${vu}`, tenantId: tid, permissions: PERMS, personId: authorId }), { headers: h });
+    tokens.push(r.json('token'));
+  }
   for (const [name, id] of Object.entries({ authorId, docId, committeeId, meetingId, agendaItemId }))
     if (!id) throw new Error(`setup: could not seed ${name}`);
-  return { token: personToken || tenantToken, tenantId: tid, authorId, docId, meetingId, agendaItemId };
+  return { tokens, tenantId: tid, authorId, docId, meetingId, agendaItemId };
 }
 
 export default function (data) {
-  const auth = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` } };
+  const auth = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.tokens[(__VU - 1) % data.tokens.length]}` } };
   const t = data.tenantId;
   const pick = Math.random();
   let r;

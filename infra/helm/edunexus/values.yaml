@@ -17,6 +17,11 @@ api:
   rabbitmq:
     host: edunexus-rabbitmq
     port: 5672
+  rateLimiting:
+    permitsPerMinute: 600          # per signed-in user (per IP when anonymous)
+    expensivePermitsPerMinute: 60  # AI, search, exports, token minting
+  # CIDRs of proxies whose X-Forwarded-For is trusted (the ingress controller's pod network).
+  trustedProxyNetworks: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
   storage:
     endpoint: edunexus-minio:9000
   ai:
