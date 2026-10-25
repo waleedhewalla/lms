@@ -38,6 +38,9 @@
 - `npm audit`: Next.js 15.1.6 criticals → upgraded to 15.5.25, build green.
   Remaining: postcss ≤8.5.22 high (build-time only, no runtime exposure). ACCEPTED, re-check on upgrade.
 
+- Compliance mapping to NCA ECC-2:2024, CCC-2:2024 and PDPL, with gaps G1–G6 and a 72-hour breach runbook: `NCA-PDPL-MAPPING.md`.
+  MFA (TOTP) is now enforced by default in the Keycloak realm.
+
 ## Still open (needs customer env / specialists)
 - Human pen-test against the scope in `PENTEST-SCOPE.md`.
 - Customer IdP wiring (turnkey Keycloak realm: `infra/keycloak/realm-edunexus.json`); Vault/SOPS (ADR-002);
