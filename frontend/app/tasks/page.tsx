@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api } from "../../lib/api";
-import { Card, Field, Page, Table, attempt, fmtDate, useL, useTenant } from "../../components/Ui";
+import { attempt, Card, Field, fmtDate, HijriHint, Page, Table, useL, useTenant } from "../../components/Ui";
 
 type Task = { id: string; title: string; assigneeId: string; status: string; dueAt: string; priority: string; progress: number; description: string };
 
@@ -66,7 +66,7 @@ export default function TasksPage() {
           <div style={{ display: "grid", gap: "0.75rem" }}>
             <Field label={L("Title", "العنوان")}><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
             <Field label={L("Assignee person ID", "معرّف المكلّف")}><input className="input" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} /></Field>
-            <Field label={L("Due", "الاستحقاق")}><input className="input" type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></Field>
+            <Field label={L("Due", "الاستحقاق")}><input className="input" type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /><HijriHint value={dueAt} /></Field>
             <Field label={L("Priority", "الأولوية")}>
               <select className="input" value={priority} onChange={(e) => setPriority(e.target.value)}>
                 {["Low", "Normal", "High", "Urgent"].map((p) => <option key={p}>{p}</option>)}</select>

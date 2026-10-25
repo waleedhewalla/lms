@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
-import { useTenant } from "../../components/Ui";
+import { fmtDate, useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 
 type Audit = { id: string; action: string; entityType: string; entityId: string; at: string; details?: string };
@@ -47,7 +47,7 @@ export default function AuditPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '0.75rem', opacity: 0.8 }}>{new Date(r.at).toLocaleString()}</td>
+                  <td style={{ padding: '0.75rem', opacity: 0.8 }}>{fmtDate(r.at)}</td>
                   <td style={{ padding: '0.75rem' }}><span className="badge">{r.action}</span></td>
                   <td style={{ padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.9em' }}>{r.entityType}:{r.entityId.slice(0, 8)}</td>
                   <td style={{ padding: '0.75rem', opacity: 0.8 }}>{r.details || '-'}</td>

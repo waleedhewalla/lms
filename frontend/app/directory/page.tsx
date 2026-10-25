@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { ConnectionBar } from "../../components/ConnectionBar";
-import { useTenant } from "../../components/Ui";
+import { fmtDay, useTenant } from "../../components/Ui";
 import { useTranslation } from "../../components/TranslationProvider";
 
 type Person = { id: string; fullName: string; email?: string; type: string };
@@ -169,7 +169,7 @@ export default function DirectoryPage() {
                               {t("dir.delegations.deputy")}: {deputy ? deputy.fullName : d.toPersonId}
                             </div>
                             <div style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: '0.2rem' }}>
-                              {t("dir.delegations.scope")}: <span className="badge">[{d.scope}]</span> • {t("dir.delegations.expires")}: {new Date(d.expiresAt).toLocaleDateString()}
+                              {t("dir.delegations.scope")}: <span className="badge">[{d.scope}]</span> • {t("dir.delegations.expires")}: {fmtDay(d.expiresAt)}
                             </div>
                           </div>
                           <button className="btn btn-secondary" style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: '#ef4444' }} onClick={() => revokeDelegation(d.id)}>
@@ -197,7 +197,7 @@ export default function DirectoryPage() {
                                 {t("dir.delegations.deputy")}: {deputy ? deputy.fullName : d.toPersonId}
                               </div>
                               <div style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: '0.2rem' }}>
-                                {t("dir.delegations.scope")}: <span className="badge">[{d.scope}]</span> • {t("dir.delegations.expires")}: {new Date(d.expiresAt).toLocaleDateString()} <span style={{ color: '#ef4444', marginLeft: '0.5rem' }}>({t("dir.delegations.expired")})</span>
+                                {t("dir.delegations.scope")}: <span className="badge">[{d.scope}]</span> • {t("dir.delegations.expires")}: {fmtDay(d.expiresAt)} <span style={{ color: '#ef4444', marginLeft: '0.5rem' }}>({t("dir.delegations.expired")})</span>
                               </div>
                             </div>
                             <button className="btn btn-secondary" style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: '#ef4444' }} onClick={() => revokeDelegation(d.id)}>

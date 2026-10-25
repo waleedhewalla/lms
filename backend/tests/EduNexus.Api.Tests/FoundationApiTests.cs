@@ -294,6 +294,15 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var text = await csv.Content.ReadAsStringAsync();
         Assert.Contains("assigneeId,assignee,pending,overdue,oldestDueAt", text);
         Assert.Contains("Rami Reviewer", text);
+        // Hijri (Umm al-Qura) exports: a companion column per date column, or Hijri in place.
+        var both = await (await client.GetAsync($"/api/reports/approval-bottlenecks/export?tenantId={tenant}&calendar=both")).Content.ReadAsStringAsync();
+        Assert.Contains("oldestDueAt,oldestDueAt_hijri", both);
+        Assert.Matches(@",14\d\d-\d\d-\d\d\r?\n", both);
+        var hijriOnly = await (await client.GetAsync($"/api/reports/approval-bottlenecks/export?tenantId={tenant}&calendar=hijri")).Content.ReadAsStringAsync();
+        Assert.Contains("assigneeId,assignee,pending,overdue,oldestDueAt", hijriOnly);
+        Assert.DoesNotContain("_hijri", hijriOnly); // dates replaced in place, no companion column
+        Assert.Matches(@",14\d\d-\d\d-\d\d\r?\n", hijriOnly);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync($"/api/reports/approval-bottlenecks/export?tenantId={tenant}&calendar=julian")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/reports/nope?tenantId={tenant}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await ClientAs(tenant, ["inbox:read"], staff).GetAsync($"/api/dashboards/executive?tenantId={tenant}")).StatusCode);
     }
@@ -2110,6 +2119,23 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
             });
             next(app);
         };
+    }
+    [Fact]
+    public void Report_Calendar_Adds_Or_Replaces_Hijri_Date_Columns()
+    {
+        var rows = new List<Dictionary<string, object?>>
+        {
+            new() { ["name"] = "A", ["dueAt"] = DateTimeOffset.Parse("2026-10-24T22:30:00Z") },
+            new() { ["name"] = "B", ["dueAt"] = null },
+        };
+        var both = EduNexus.Api.Endpoints.ReportEndpoints.WithCalendar(rows, "both", TimeSpan.FromHours(3));
+        Assert.Equal(["name", "dueAt", "dueAt_hijri"], both[0].Keys);
+        Assert.Equal("1448-05-14", both[0]["dueAt_hijri"]); // already 25 Oct in Riyadh
+        Assert.Null(both[1]["dueAt_hijri"]);
+        var hijri = EduNexus.Api.Endpoints.ReportEndpoints.WithCalendar(rows, "hijri", TimeSpan.FromHours(3));
+        Assert.Equal(["name", "dueAt"], hijri[0].Keys);
+        Assert.Equal("1448-05-14", hijri[0]["dueAt"]);
+        Assert.Same(rows, EduNexus.Api.Endpoints.ReportEndpoints.WithCalendar(rows, "gregorian", TimeSpan.FromHours(3)));
     }
 }
 

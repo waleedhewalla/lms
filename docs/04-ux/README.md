@@ -29,4 +29,10 @@ show an accessible error banner (`role=alert`) and empty states, and hide action
 | `/directory`, `/roles`, `/audit` | UX-DIR-001, UX-ADM-001, UX-AUD-001 | People, role assignment, audit trail |
 | `/settings` | UX-ADM-002 Settings | My account/permissions, notification preferences, SLA policies |
 
+Dates: every screen formats dates through `fmtDate`/`fmtDay` (`frontend/lib/dates.ts`) in the viewer's
+calendar preference: Gregorian, Hijri (Umm al-Qura, the official Saudi calendar), or both. Arabic users default to
+both, English users to Gregorian; Settings (UX-ADM-002) changes it per device. Date inputs show the Hijri
+equivalent underneath, and report CSV exports follow the preference (`?calendar=hijri|both` adds or substitutes
+Umm al-Qura columns, computed on the server in Saudi time, UTC+3, configurable via `Calendar__UtcOffsetHours`).
+
 RTL rules: `dir=rtl`, mirror navigation/actions, no hardcoded left/right, Arabic numerals optional, date Hijri/Gregorian toggle.

@@ -47,6 +47,12 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **Load test:** 0% errors at 10 virtual users. R1 baseline p95 7.9 ms; R2–R5 write mix p95 16.9 ms.
 - **Pen-test:** scope document `docs/03-architecture/PENTEST-SCOPE.md`.
 
+## Wave H (Gulf readiness), part 1: Hijri dates
+- Dates throughout the app can show Gregorian, Hijri (Umm al-Qura) or both. Arabic users default to both; Settings changes it.
+- Date inputs show the Hijri equivalent as you pick.
+- Report CSV exports accept `?calendar=hijri|both`, which substitutes or adds Umm al-Qura date columns computed in Saudi time.
+- Fix: the interface language could revert to English after a quick reload. It is now saved only when the user changes it.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

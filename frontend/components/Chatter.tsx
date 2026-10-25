@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { fmtDate, fmtDay } from "./Ui";
 
 export type ActivityType = 'ToDo' | 'Review' | 'Sign' | 'Call' | 'Meeting';
 
@@ -521,7 +522,7 @@ export function Chatter({
                         : 'rgba(226, 232, 240, 0.7)',
                       fontWeight: overdue ? 600 : 400,
                     }}>
-                      {act.isCompleted ? '✓ Completed' : `Due: ${new Date(act.dueDate).toLocaleDateString()}`}
+                      {act.isCompleted ? '✓ Completed' : `Due: ${fmtDay(act.dueDate)}`}
                     </span>
                     {!act.isCompleted && (
                       <button
@@ -597,7 +598,7 @@ export function Chatter({
                   </span>
                 </div>
                 <span style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.45)' }}>
-                  {new Date(c.createdAt).toLocaleString()}
+                  {fmtDate(c.createdAt)}
                 </span>
               </div>
               <div style={{ fontSize: '14px', lineHeight: '1.5', whiteSpace: 'pre-wrap', opacity: 0.95 }}>
