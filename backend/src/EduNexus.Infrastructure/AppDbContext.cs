@@ -44,6 +44,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Objective> Objectives => Set<Objective>();
     public DbSet<Kpi> Kpis => Set<Kpi>();
     public DbSet<KpiReading> KpiReadings => Set<KpiReading>();
+    public DbSet<AgendaRecusal> AgendaRecusals => Set<AgendaRecusal>();
+    public DbSet<InterestDeclaration> InterestDeclarations => Set<InterestDeclaration>();
+    public DbSet<CircularResolution> CircularResolutions => Set<CircularResolution>();
+    public DbSet<ResolutionVote> ResolutionVotes => Set<ResolutionVote>();
     public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
     public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
     public DbSet<IntegrationDelivery> IntegrationDeliveries => Set<IntegrationDelivery>();
@@ -341,6 +345,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => new { x.TenantId, x.ObjectiveId });
             e.Property(x => x.LowerIsBetter).HasDefaultValue(false);
         });
+        b.Entity<AgendaRecusal>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.AgendaItemId, x.PersonId }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.MeetingId });
+            e.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.DeclaredBy).HasMaxLength(200).IsRequired();
+        });
+        b.Entity<InterestDeclaration>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PersonId, x.Period });
+            e.Property(x => x.Period).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Interests).HasMaxLength(4000);
+        });
+        b.Entity<CircularResolution>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.CommitteeId, x.CreatedAt });
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Text).HasMaxLength(20000).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Outcome).HasMaxLength(500);
+        });
+        b.Entity<ResolutionVote>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.ResolutionId, x.PersonId }).IsUnique();
+            e.Property(x => x.Choice).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Remarks).HasMaxLength(1000);
+        });
         b.Entity<KpiReading>(e =>
         {
             e.HasKey(x => x.Id);
@@ -456,6 +492,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => new { x.TenantId, x.MeetingId, x.AgendaItemId, x.PersonId }).IsUnique();
             e.Property(x => x.Choice).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Remarks).HasMaxLength(500);
+            e.Property(x => x.RecordedBy).HasMaxLength(200);
         });
         b.Entity<DocumentRetentionPolicy>(e =>
         {

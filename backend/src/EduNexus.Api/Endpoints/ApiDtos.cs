@@ -17,7 +17,8 @@ public sealed record RevokeRoleReq(Guid TenantId, Guid PersonId, string RoleCode
 public sealed record RecipientReq(string? PersonId, string DisplayName, bool IsExternal);
 public sealed record CreateCorrespondenceReq(Guid TenantId, string Type, string Subject, string Content, Guid AuthorId, string? Priority, bool IsConfidential, RecipientReq[]? Recipients, Guid? ParentCorrespondenceId = null);
 public sealed record CreateRoutingSlipReq(Guid TenantId, Guid FromPersonId, Guid? ToUnitId, Guid? ToPersonId, string ActionRequired, string Instructions, DateTimeOffset? DueAt);
-public sealed record CastMeetingVoteReq(Guid TenantId, Guid AgendaItemId, Guid PersonId, string Choice, string? Remarks = null);
+/// <summary>PersonId omitted: the caller votes for themselves. Given and not the caller: the secretary records a vote cast in the room (meeting:create).</summary>
+public sealed record CastMeetingVoteReq(Guid TenantId, Guid AgendaItemId, Guid? PersonId, string Choice, string? Remarks = null);
 public sealed record SetDocumentRetentionReq(Guid TenantId, string Standard, int RetentionPeriodMonths, string DispositionAction, int ReviewIntervalMonths, Guid? ReviewedByPersonId = null, string? Notes = null);
 public sealed record SubmitCorrespondenceReq(Guid TenantId, Guid ReviewerId);
 public sealed record DecideApprovalReq(Guid TenantId, Guid? DecidedBy, bool Approve, string? Comment);
@@ -27,7 +28,7 @@ public sealed record CompleteTaskReq(Guid TenantId);
 public sealed record UpdateTaskReq(Guid TenantId, string? Title, string? Description, string? Priority, int? Progress, string? Status);
 public sealed record AddTaskEvidenceReq(Guid TenantId, Guid UploadedBy, string ObjectKey, string FileName);
 public sealed record AddTaskCommentReq(Guid TenantId, Guid AuthorId, string Text);
-public sealed record CreateCommitteeReq(Guid TenantId, string Code, string Name);
+public sealed record CreateCommitteeReq(Guid TenantId, string Code, string Name, double? QuorumPercent = null);
 public sealed record AddMemberReq(Guid TenantId, Guid PersonId, string? Role);
 public sealed record AgendaReq(string Title, string? Description);
 public sealed record CreateMeetingReq(Guid TenantId, Guid CommitteeId, string Title, DateTimeOffset StartsAt, AgendaReq[]? Agenda);

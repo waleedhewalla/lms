@@ -41,6 +41,8 @@ type QuorumInfo = {
   hasQuorum: boolean;
 };
 
+type ItemResult = { agendaItemId: string; outcome: string; recused: number; quorate: boolean; quorumRequired: number; notVoted: number };
+
 type VoteTally = {
   agendaItemId: string;
   inFavor: number;
@@ -69,6 +71,10 @@ export default function MeetingsPage() {
   const [quorum, setQuorum] = useState<QuorumInfo | null>(null);
   const [tallies, setTallies] = useState<VoteTally[]>([]);
   const [votingPersonId, setVotingPersonId] = useState("");
+  const [results, setResults] = useState<ItemResult[]>([]);
+  const [conflictReason, setConflictReason] = useState("");
+  const loadResults = async (id: string) =>
+    setResults((await api<{ items: ItemResult[] }>(`/api/meetings/${id}/results?tenantId=${tenantId}`).catch(() => ({ items: [] }))).items);
   const [voteRemarks, setVoteRemarks] = useState("");
   const [selectedAgendaId, setSelectedAgendaId] = useState<string | null>(null);
   const [decisionText, setDecisionText] = useState("");
@@ -129,6 +135,7 @@ export default function MeetingsPage() {
       setMeetingDetail(detail);
       setQuorum(q);
       setTallies(v.tallies || []);
+      await loadResults(id);
       if (detail.agenda.length > 0 && !selectedAgendaId) {
         setSelectedAgendaId(detail.agenda[0].id);
       }
@@ -173,7 +180,7 @@ export default function MeetingsPage() {
         body: JSON.stringify({
           tenantId,
           agendaItemId: selectedAgendaId,
-          personId: votingPersonId || "00000000-0000-0000-0000-000000000001",
+          personId: votingPersonId.trim() || undefined,
           choice,
           remarks: voteRemarks || undefined
         })
@@ -182,6 +189,7 @@ export default function MeetingsPage() {
       // Refresh votes
       const v = await api<{ votes: unknown[]; tallies: VoteTally[] }>(`/api/meetings/${activeMeetingId}/votes?tenantId=${tenantId}`);
       setTallies(v.tallies || []);
+      await loadResults(activeMeetingId);
     } catch (e) { setErr(String(e)); }
   }
 
@@ -390,6 +398,7 @@ export default function MeetingsPage() {
                     {meetingDetail.agenda.map((item) => {
                       const isSelected = item.id === selectedAgendaId;
                       const tally = tallies.find((t) => t.agendaItemId === item.id) || { inFavor: 0, against: 0, abstain: 0, totalVotes: 0 };
+                      const result = results.find((r) => r.agendaItemId === item.id);
                       return (
                         <div
                           key={item.id}
@@ -411,6 +420,8 @@ export default function MeetingsPage() {
                               <span style={{ color: '#22c55e' }}>👍 {tally.inFavor}</span>
                               <span style={{ color: '#ef4444' }}>👎 {tally.against}</span>
                               <span style={{ opacity: 0.7 }}>⚪ {tally.abstain}</span>
+                              {result && result.recused > 0 && <span title="Members who declared a conflict of interest">🚫 {result.recused}</span>}
+                              {result && <span className="badge" title={`Quorum for this item: ${result.quorumRequired}${result.notVoted ? `; ${result.notVoted} present not yet voted` : ""}`}>{result.outcome}</span>}
                             </div>
                           </div>
 
@@ -426,7 +437,8 @@ export default function MeetingsPage() {
                               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
                                 <input
                                   className="input"
-                                  placeholder="Voter Person ID"
+                                  placeholder="Voter person ID (blank = you; the secretary may record a member's vote)"
+                                  aria-label="Voter person ID"
                                   value={votingPersonId}
                                   onChange={(e) => setVotingPersonId(e.target.value)}
                                   style={{ maxWidth: '280px' }}
@@ -458,6 +470,32 @@ export default function MeetingsPage() {
                                   onClick={(e) => { e.stopPropagation(); castVote("Abstain"); }}
                                 >
                                   ⚪ Abstain
+                                </button>
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  className="input"
+                                  placeholder="Nature of the interest"
+                                  aria-label="Conflict of interest"
+                                  value={conflictReason}
+                                  onChange={(e) => setConflictReason(e.target.value)}
+                                />
+                                <button
+                                  className="btn btn-secondary"
+                                  disabled={!conflictReason}
+                                  onClick={async () => {
+                                    setErr("");
+                                    try {
+                                      await api(`/api/meetings/${activeMeetingId}/agenda/${item.id}/recusals`, {
+                                        method: "POST",
+                                        body: JSON.stringify({ tenantId, personId: votingPersonId.trim() || undefined, reason: conflictReason }),
+                                      });
+                                      setConflictReason("");
+                                      if (activeMeetingId) await loadResults(activeMeetingId);
+                                    } catch (e) { setErr(String(e)); }
+                                  }}
+                                >
+                                  🚫 Declare conflict &amp; recuse
                                 </button>
                               </div>
                             </div>

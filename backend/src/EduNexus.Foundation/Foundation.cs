@@ -171,7 +171,8 @@ public sealed record TenantSequence(Guid TenantId, string Scope, long NextValue)
 
 // ============================ R3 — Governance ============================
 
-public sealed record Committee(Guid Id, Guid TenantId, string Code, string Name, bool IsActive);
+/// <summary>A governing body. <see cref="QuorumPercent"/>: null means a simple majority of current members; otherwise at least that share (e.g. 66.67).</summary>
+public sealed record Committee(Guid Id, Guid TenantId, string Code, string Name, bool IsActive, double? QuorumPercent = null);
 
 public sealed record CommitteeMember(Guid Id, Guid TenantId, Guid CommitteeId, Guid PersonId, string Role, DateTimeOffset JoinedAt,
     DateTimeOffset? TermEndsAt = null);
@@ -361,7 +362,7 @@ public enum VoteChoice { InFavor, Against, Abstain }
 
 public sealed record MeetingVote(
     Guid Id, Guid TenantId, Guid MeetingId, Guid AgendaItemId,
-    Guid PersonId, VoteChoice Choice, DateTimeOffset CastAt, string? Remarks = null);
+    Guid PersonId, VoteChoice Choice, DateTimeOffset CastAt, string? Remarks = null, string? RecordedBy = null);
 
 public enum DispositionAction { Archive, PermanentPreservation, ReviewRequired, Disposal }
 
@@ -661,4 +662,63 @@ public static class CsvText
         if (rows.Count > 0 && rows[0].Length > 0) rows[0][0] = rows[0][0].TrimStart('﻿');
         return rows;
     }
+}
+
+// ============================ Wave J — Board experience ============================
+
+/// <summary>A member's declared conflict of interest on one agenda item: they take no part in the vote.</summary>
+public sealed record AgendaRecusal(
+    Guid Id, Guid TenantId, Guid MeetingId, Guid AgendaItemId, Guid PersonId, string Reason, string DeclaredBy, DateTimeOffset DeclaredAt);
+
+/// <summary>A periodic (usually annual) declaration of interests for the register.</summary>
+public sealed record InterestDeclaration(
+    Guid Id, Guid TenantId, Guid PersonId, string Period, bool NoInterests, string? Interests, DateTimeOffset DeclaredAt);
+
+public enum ResolutionStatus { Open, Passed, Failed, Withdrawn, Expired }
+
+/// <summary>A resolution decided in writing by circulation, without a meeting.</summary>
+public sealed record CircularResolution(
+    Guid Id, Guid TenantId, Guid CommitteeId, string Title, string Text, bool RequiresUnanimous, ResolutionStatus Status,
+    string CreatedBy, DateTimeOffset CreatedAt, DateTimeOffset ClosesAt, DateTimeOffset? ClosedAt, string? Outcome);
+
+/// <summary>One member's response to a circular resolution: a vote, or a recusal (Choice null).</summary>
+public sealed record ResolutionVote(
+    Guid Id, Guid TenantId, Guid ResolutionId, Guid PersonId, VoteChoice? Choice, bool Recused, string? Remarks, DateTimeOffset CastAt);
+
+public enum ItemOutcome { NoVotes, NoQuorum, Carried, Failed, Tied }
+
+public static class BoardRules
+{
+    /// <summary>Members needed for quorum: a simple majority, or at least <paramref name="percent"/>% (rounded up).</summary>
+    public static int QuorumRequired(int members, double? percent)
+    {
+        if (members <= 0) return 1;
+        if (percent is not { } p) return members / 2 + 1;
+        return Math.Clamp((int)Math.Ceiling(members * p / 100.0 - 0.01), 1, members);
+    }
+
+    /// <summary>An agenda item carries on more votes for than against (abstentions do not count), if the meeting is quorate for it.</summary>
+    public static ItemOutcome Outcome(int inFavor, int against, int abstain, bool quorate)
+    {
+        if (inFavor + against + abstain == 0) return ItemOutcome.NoVotes;
+        if (!quorate) return ItemOutcome.NoQuorum;
+        return inFavor > against ? ItemOutcome.Carried : inFavor < against ? ItemOutcome.Failed : ItemOutcome.Tied;
+    }
+
+    /// <summary>
+    /// A written resolution needs a majority of all eligible members (not of votes cast), or every eligible member when unanimous.
+    /// It is decided as soon as the result can no longer change; otherwise it stays open.
+    /// </summary>
+    public static ResolutionStatus Decide(int eligible, int inFavor, int againstOrAbstain, bool unanimous, bool closed)
+    {
+        if (eligible <= 0) return closed ? ResolutionStatus.Expired : ResolutionStatus.Open;
+        var needed = unanimous ? eligible : eligible / 2 + 1;
+        if (inFavor >= needed) return ResolutionStatus.Passed;
+        var pending = eligible - inFavor - againstOrAbstain;
+        if (inFavor + pending < needed) return ResolutionStatus.Failed;
+        return closed ? ResolutionStatus.Expired : ResolutionStatus.Open;
+    }
+
+    /// <summary>A member counts on a date unless their term had ended. (JoinedAt is when the row was entered, so it is not used.)</summary>
+    public static bool IsCurrent(CommitteeMember m, DateTimeOffset at) => m.TermEndsAt is null || m.TermEndsAt > at;
 }

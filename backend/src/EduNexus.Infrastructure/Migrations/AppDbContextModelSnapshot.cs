@@ -52,6 +52,47 @@ namespace EduNexus.Infrastructure.Migrations
                     b.ToTable("AgendaItems");
                 });
 
+            modelBuilder.Entity("EduNexus.Foundation.AgendaRecusal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AgendaItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("DeclaredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeclaredBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("MeetingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PersonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "MeetingId");
+
+                    b.HasIndex("TenantId", "AgendaItemId", "PersonId")
+                        .IsUnique();
+
+                    b.ToTable("AgendaRecusals");
+                });
+
             modelBuilder.Entity("EduNexus.Foundation.AiInteraction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -316,6 +357,61 @@ namespace EduNexus.Infrastructure.Migrations
                     b.ToTable("Campuses");
                 });
 
+            modelBuilder.Entity("EduNexus.Foundation.CircularResolution", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ClosesAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CommitteeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("RequiresUnanimous")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("character varying(20000)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "CommitteeId", "CreatedAt");
+
+                    b.ToTable("CircularResolutions");
+                });
+
             modelBuilder.Entity("EduNexus.Foundation.Committee", b =>
                 {
                     b.Property<Guid>("Id")
@@ -332,6 +428,9 @@ namespace EduNexus.Infrastructure.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<double?>("QuorumPercent")
+                        .HasColumnType("double precision");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
@@ -1417,6 +1516,40 @@ namespace EduNexus.Infrastructure.Migrations
                     b.ToTable("IntegrationEndpoints");
                 });
 
+            modelBuilder.Entity("EduNexus.Foundation.InterestDeclaration", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("DeclaredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Interests")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<bool>("NoInterests")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Period")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("PersonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "PersonId", "Period");
+
+                    b.ToTable("InterestDeclarations");
+                });
+
             modelBuilder.Entity("EduNexus.Foundation.Kpi", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1598,6 +1731,10 @@ namespace EduNexus.Infrastructure.Migrations
 
                     b.Property<Guid>("PersonId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RecordedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("Remarks")
                         .HasMaxLength(500)
@@ -2227,6 +2364,43 @@ namespace EduNexus.Infrastructure.Migrations
                     b.HasIndex("TenantId", "Status");
 
                     b.ToTable("Requests");
+                });
+
+            modelBuilder.Entity("EduNexus.Foundation.ResolutionVote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CastAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Choice")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("PersonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Recused")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Remarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("ResolutionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ResolutionId", "PersonId")
+                        .IsUnique();
+
+                    b.ToTable("ResolutionVotes");
                 });
 
             modelBuilder.Entity("EduNexus.Foundation.RetentionSchedule", b =>
