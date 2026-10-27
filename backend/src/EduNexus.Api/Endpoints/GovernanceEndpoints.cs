@@ -33,8 +33,10 @@ public static class GovernanceEndpoints
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { error = "Code and Name required." });
+            if (req.QuorumPercent is { } qp && (qp <= 0 || qp > 100))
+                return Results.BadRequest(new { error = "QuorumPercent must be between 0 and 100 (omit it for a simple majority)." });
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            var c = new Committee(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Name.Trim(), true);
+            var c = new Committee(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Name.Trim(), true, req.QuorumPercent);
             db.Committees.Add(c);
             DomainEvents.Record(db, req.TenantId, "CommitteeCreated", "CommitteeCreated",
                 nameof(Committee), c.Id.ToString(),
@@ -168,15 +170,8 @@ public static class GovernanceEndpoints
             var m = await db.Meetings.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
             if (m is null) return Results.NotFound(new { error = "Meeting not found." });
 
-            var totalMembers = await db.CommitteeMembers.CountAsync(cm => cm.TenantId == tenantId && cm.CommitteeId == m.CommitteeId, ct);
-            var attendances = await db.Attendances.Where(a => a.TenantId == tenantId && a.MeetingId == id).ToListAsync(ct);
-            var presentCount = attendances.Count(a => a.Status == AttendanceStatus.Present);
-            var absentCount = attendances.Count(a => a.Status == AttendanceStatus.Absent);
-            var excusedCount = attendances.Count(a => a.Status == AttendanceStatus.Excused);
-            var quorumRequired = (int)Math.Ceiling(totalMembers > 0 ? totalMembers / 2.0 : 1);
-            var hasQuorum = totalMembers > 0 ? (presentCount >= quorumRequired) : false;
-
-            return Results.Ok(new { meetingId = id, totalMembers, presentCount, absentCount, excusedCount, quorumRequired, hasQuorum });
+            var q = await BoardEndpoints.QuorumAsync(db, tenantId, m, ct);
+            return Results.Ok(new { meetingId = id, q.TotalMembers, q.PresentCount, q.AbsentCount, q.ExcusedCount, q.QuorumRequired, q.HasQuorum, q.QuorumRule });
         });
         meetings.MapGet("/{id:guid}/packet", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
@@ -187,14 +182,11 @@ public static class GovernanceEndpoints
             if (m is null) return Results.NotFound(new { error = "Meeting not found." });
 
             var committee = await db.Committees.FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == m.CommitteeId, ct);
-            var members = await db.CommitteeMembers.Where(cm => cm.TenantId == tenantId && cm.CommitteeId == m.CommitteeId).ToListAsync(ct);
-            var attendances = await db.Attendances.Where(a => a.TenantId == tenantId && a.MeetingId == id).ToListAsync(ct);
-            var totalMembers = members.Count;
-            var presentCount = attendances.Count(a => a.Status == AttendanceStatus.Present);
-            var absentCount = attendances.Count(a => a.Status == AttendanceStatus.Absent);
-            var excusedCount = attendances.Count(a => a.Status == AttendanceStatus.Excused);
-            var quorumRequired = (int)Math.Ceiling(totalMembers > 0 ? totalMembers / 2.0 : 1);
-            var hasQuorum = totalMembers > 0 ? (presentCount >= quorumRequired) : false;
+            var q = await BoardEndpoints.QuorumAsync(db, tenantId, m, ct);
+            var members = q.Members;
+            var attendances = q.Attendances;
+            int totalMembers = q.TotalMembers, presentCount = q.PresentCount, absentCount = q.AbsentCount, excusedCount = q.ExcusedCount, quorumRequired = q.QuorumRequired;
+            var hasQuorum = q.HasQuorum;
 
             var agenda = await db.AgendaItems.Where(a => a.TenantId == tenantId && a.MeetingId == id).OrderBy(a => a.Order).ToListAsync(ct);
             var votes = await db.MeetingVotes.Where(v => v.TenantId == tenantId && v.MeetingId == id).OrderBy(v => v.CastAt).ToListAsync(ct);
@@ -258,28 +250,8 @@ public static class GovernanceEndpoints
             }).ToList();
             return Results.Ok(new { votes, tallies });
         });
-        meetings.MapPost("/{id:guid}/votes", async (AppDbContext db, HttpContext ctx, Guid id, CastMeetingVoteReq req, CancellationToken ct) =>
-        {
-            if (!ctx.User.HasPermission("meeting:update") && !ctx.User.HasPermission("meeting:create") && !ctx.User.HasPermission("meeting:read")) return Results.Forbid();
-            if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
-            if (!Enum.TryParse<VoteChoice>(req.Choice, true, out var choice))
-                return Results.BadRequest(new { error = "Choice must be InFavor|Against|Abstain." });
-            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            var agendaItem = await db.AgendaItems
-                .FirstOrDefaultAsync(a => a.TenantId == req.TenantId && a.MeetingId == id && a.Id == req.AgendaItemId, ct);
-            if (agendaItem is null) return Results.NotFound(new { error = "Agenda item not found for meeting." });
-            if (await db.MeetingVotes.AnyAsync(v => v.TenantId == req.TenantId && v.AgendaItemId == req.AgendaItemId && v.PersonId == req.PersonId, ct))
-                return Results.Conflict(new { error = "This person has already voted on this agenda item." });
-            var vote = new MeetingVote(Guid.NewGuid(), req.TenantId, id, req.AgendaItemId,
-                req.PersonId, choice, DateTimeOffset.UtcNow, req.Remarks?.Trim());
-            db.MeetingVotes.Add(vote);
-            DomainEvents.Record(db, req.TenantId, "MeetingVoteCast", "MeetingVoteCast",
-                nameof(MeetingVote), vote.Id.ToString(),
-                payload: new { tenantId = req.TenantId, meetingId = id, agendaItemId = req.AgendaItemId, choice = choice.ToString() }, details: choice.ToString());
-            await db.SaveChangesAsync(ct);
-            await scope.CommitAsync(ct);
-            return Results.Ok(vote);
-        });
+        meetings.MapPost("/{id:guid}/votes", (AppDbContext db, HttpContext ctx, Guid id, CastMeetingVoteReq req, CancellationToken ct) =>
+            BoardEndpoints.CastMeetingVoteAsync(db, ctx, id, req, ct));
 
         // --- Decisions & Decision Actions ---
         var decisions = app.MapGroup("/api/decisions").WithTags("Decisions").RequireAuthorization();

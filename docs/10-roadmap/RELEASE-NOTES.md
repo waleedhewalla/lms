@@ -80,6 +80,14 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **Strategy scorecard** (`/strategy`): KPIs have a baseline and a direction ("lower is better" for rates such as dropout). Status is Achieved, On track (≥75% of the way from baseline to target), At risk (≥50%) or Off track. Each reading is kept with its period, so the scorecard shows a trend; KPIs cited as accreditation evidence are flagged.
 - New Keycloak group `edunexus-quality-officers`. Migration R18 adds `KpiReadings` (row-level security), `Standards.Framework`, and `Kpis.Baseline` / `Kpis.LowerIsBetter`.
 
+## Board (Wave J)
+- **Votes belong to the voter.** A member votes for themselves; the secretary (`meeting:create`) may record a vote cast in the room, and the vote keeps who recorded it. Only current members who are marked present and have not declared a conflict can vote. Previously any caller could submit a vote for any person ID.
+- **Quorum per committee:** a simple majority of current members by default (previously half, rounded up), or at least a set percentage (e.g. 66.67 for two-thirds). Members whose term has ended no longer count.
+- **Item results** (`/api/meetings/{id}/results`): tally, item quorum and outcome (Carried, Failed, Tied, No quorum). Abstentions do not count against.
+- **Conflicts of interest:** a member declares an interest on an agenda item before voting and is excluded from that vote and that item's quorum. An annual **interest register** per committee shows who has declared and who is missing.
+- **Written resolutions** (`/board`): the secretary circulates a resolution with a closing time; members are notified and respond In favour, Against, Abstain or Recuse. It passes with a majority of all eligible members (or all of them when unanimous is required) as soon as the result is certain, fails when it no longer can pass, and expires at the deadline. Closed resolutions produce a printable certificate listing every member's response.
+- Migration R19 adds `AgendaRecusals`, `InterestDeclarations`, `CircularResolutions` and `ResolutionVotes` (all under row-level security), `Committees.QuorumPercent` and `MeetingVotes.RecordedBy`.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

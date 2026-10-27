@@ -2497,5 +2497,122 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var ncaaaHtml = await (await viewer.GetAsync($"/api/quality/self-study?tenantId={tenant}&framework=NCAAA-I")).Content.ReadAsStringAsync();
         Assert.Contains("First-year dropout — 12 / 10 %", ncaaaHtml);
     }
+    [Fact]
+    public async Task WaveJ_Board_Votes_Recusals_Interests_And_Written_Resolutions()
+    {
+        var boot = factory.CreateClient();
+        Auth(boot, Mint(Guid.NewGuid(), ["tenant:create"]));
+        var tenant = IdOf(await (await boot.PostAsJsonAsync("/api/tenants", new { slug = $"board-{Guid.NewGuid():N}"[..20], name = "Board University" })).Content.ReadFromJsonAsync<JsonElement>());
+        string[] secretaryPerms = ["person:create", "person:read", "committee:create", "committee:read", "meeting:create", "meeting:read"];
+        var sec = factory.CreateClient();
+        Auth(sec, Mint(tenant, secretaryPerms));
+        async Task<Guid> Person(string name) => IdOf(await (await sec.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = name })).Content.ReadFromJsonAsync<JsonElement>());
+        var a = await Person("Trustee A"); var b = await Person("Trustee B"); var c = await Person("Trustee C"); var d = await Person("Trustee D"); var e = await Person("Former Trustee E");
+        Assert.Equal(HttpStatusCode.BadRequest, (await sec.PostAsJsonAsync("/api/committees", new { tenantId = tenant, code = "X", name = "X", quorumPercent = 120 })).StatusCode);
+        var board = IdOf(await (await sec.PostAsJsonAsync("/api/committees", new { tenantId = tenant, code = "BOT", name = "Board of Trustees" })).Content.ReadFromJsonAsync<JsonElement>());
+        foreach (var p in new[] { a, b, c, d, e })
+            Assert.Equal(HttpStatusCode.Created, (await sec.PostAsJsonAsync($"/api/committees/{board}/members", new { tenantId = tenant, personId = p })).StatusCode);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var ended = await db.CommitteeMembers.SingleAsync(m => m.CommitteeId == board && m.PersonId == e);
+            db.Entry(ended).CurrentValues.SetValues(ended with { TermEndsAt = DateTimeOffset.UtcNow.AddDays(-30) });
+            await db.SaveChangesAsync();
+        }
+        HttpClient Member(Guid p) => ClientAs(tenant, ["meeting:read", "committee:read"], p);
+
+        var meeting = IdOf(await (await sec.PostAsJsonAsync("/api/meetings", new
+        {
+            tenantId = tenant, committeeId = board, title = "Board meeting 7", startsAt = DateTimeOffset.UtcNow,
+            agenda = new[] { new { title = "Award of catering contract", description = "Tender 12" }, new { title = "Annual budget", description = "FY2027" } },
+        })).Content.ReadFromJsonAsync<JsonElement>());
+        foreach (var (p, st) in new[] { (a, "Present"), (b, "Present"), (c, "Present"), (d, "Absent"), (e, "Present") })
+            await sec.PostAsJsonAsync($"/api/meetings/{meeting}/attendance", new { tenantId = tenant, personId = p, status = st });
+
+        // Quorum: 4 current members (E's term ended), a majority is 3, 3 present.
+        var q = await sec.GetFromJsonAsync<JsonElement>($"/api/meetings/{meeting}/quorum?tenantId={tenant}");
+        Assert.Equal(4, q.GetProperty("totalMembers").GetInt32());
+        Assert.Equal(3, q.GetProperty("quorumRequired").GetInt32());
+        Assert.True(q.GetProperty("hasQuorum").GetBoolean());
+
+        var agenda = (await sec.GetFromJsonAsync<JsonElement>($"/api/meetings/{meeting}?tenantId={tenant}")).GetProperty("agenda");
+        var item1 = agenda[0].GetProperty("id").GetGuid(); var item2 = agenda[1].GetProperty("id").GetGuid();
+        object Vote(Guid item, string choice, Guid? person = null) => new { tenantId = tenant, agendaItemId = item, personId = person, choice };
+
+        // Votes are the member's own; nobody votes for someone else except the secretary recording the room.
+        Assert.Equal(HttpStatusCode.OK, (await Member(a).PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item1, "InFavor"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Member(a).PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item1, "InFavor", b))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(d).PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item1, "InFavor"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Member(e).PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item1, "InFavor"))).StatusCode);
+
+        // Conflict of interest: C declares and cannot vote on item 1; B cannot declare after voting.
+        Assert.Equal(HttpStatusCode.BadRequest, (await Member(c).PostAsJsonAsync($"/api/meetings/{meeting}/agenda/{item1}/recusals", new { tenantId = tenant, reason = "" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await Member(c).PostAsJsonAsync($"/api/meetings/{meeting}/agenda/{item1}/recusals", new { tenantId = tenant, reason = "Spouse is a director of a bidder" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(c).PostAsJsonAsync($"/api/meetings/{meeting}/agenda/{item1}/recusals", new { tenantId = tenant, reason = "again" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(c).PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item1, "InFavor"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Member(b).PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item1, "Against"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(b).PostAsJsonAsync($"/api/meetings/{meeting}/agenda/{item1}/recusals", new { tenantId = tenant, reason = "late" })).StatusCode);
+        var recorded = await (await sec.PostAsJsonAsync($"/api/meetings/{meeting}/votes", Vote(item2, "InFavor", c))).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("tests", recorded.GetProperty("recordedBy").GetString());
+
+        var results = await sec.GetFromJsonAsync<JsonElement>($"/api/meetings/{meeting}/results?tenantId={tenant}");
+        var r1 = results.GetProperty("items")[0]; var r2 = results.GetProperty("items")[1];
+        Assert.Equal(1, r1.GetProperty("recused").GetInt32());
+        Assert.Equal(2, r1.GetProperty("quorumRequired").GetInt32());   // majority of the 3 unconflicted members
+        Assert.Equal("Tied", r1.GetProperty("outcome").GetString());
+        Assert.Equal("Carried", r2.GetProperty("outcome").GetString());
+        Assert.Equal(2, r2.GetProperty("notVoted").GetInt32());
+        Assert.Equal(1, (await sec.GetFromJsonAsync<JsonElement>($"/api/meetings/{meeting}/recusals?tenantId={tenant}")).GetArrayLength());
+
+        // Interest register for the year.
+        Assert.Equal(HttpStatusCode.BadRequest, (await Member(a).PostAsJsonAsync("/api/governance/interests", new { tenantId = tenant, period = "2026", noInterests = false })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await Member(a).PostAsJsonAsync("/api/governance/interests", new { tenantId = tenant, period = "2026", noInterests = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await Member(c).PostAsJsonAsync("/api/governance/interests", new { tenantId = tenant, period = "2026", noInterests = false, interests = "Spouse: director, Gulf Catering Co." })).StatusCode);
+        var reg = await sec.GetFromJsonAsync<JsonElement>($"/api/governance/interests?tenantId={tenant}&committeeId={board}&period=2026");
+        Assert.Equal(4, reg.GetProperty("members").GetInt32());
+        Assert.Equal(2, reg.GetProperty("declared").GetInt32());
+        Assert.False(reg.GetProperty("rows")[0].GetProperty("declared").GetBoolean());   // missing declarations listed first
+
+        // Written resolution: majority of all eligible members; recusal reduces the eligible count.
+        Assert.Equal(HttpStatusCode.BadRequest, (await sec.PostAsJsonAsync("/api/resolutions", new { tenantId = tenant, committeeId = board, title = "T", text = "X", closesAt = DateTimeOffset.UtcNow.AddMinutes(5) })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Member(a).PostAsJsonAsync("/api/resolutions", new { tenantId = tenant, committeeId = board, title = "T", text = "X", closesAt = DateTimeOffset.UtcNow.AddDays(2) })).StatusCode);
+        var res = IdOf(await (await sec.PostAsJsonAsync("/api/resolutions", new { tenantId = tenant, committeeId = board, title = "Approve honorary degree", text = "Resolved that ...", closesAt = DateTimeOffset.UtcNow.AddDays(2) })).Content.ReadFromJsonAsync<JsonElement>());
+        object Ballot(string choice) => new { tenantId = tenant, choice };
+        var v1 = await (await Member(a).PostAsJsonAsync($"/api/resolutions/{res}/vote", Ballot("InFavor"))).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Open", v1.GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(a).PostAsJsonAsync($"/api/resolutions/{res}/vote", Ballot("Against"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Member(e).PostAsJsonAsync($"/api/resolutions/{res}/vote", Ballot("InFavor"))).StatusCode);
+        var v2 = await (await Member(b).PostAsJsonAsync($"/api/resolutions/{res}/recuse", new { tenantId = tenant, reason = "Nominee is a relative" })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(3, v2.GetProperty("eligible").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict, (await sec.GetAsync($"/api/resolutions/{res}/certificate?tenantId={tenant}")).StatusCode);
+        var v3 = await (await Member(c).PostAsJsonAsync($"/api/resolutions/{res}/vote", Ballot("InFavor"))).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Passed", v3.GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(d).PostAsJsonAsync($"/api/resolutions/{res}/vote", Ballot("InFavor"))).StatusCode);
+        var cert = await sec.GetAsync($"/api/resolutions/{res}/certificate?tenantId={tenant}");
+        Assert.Equal("text/html", cert.Content.Headers.ContentType!.MediaType);
+        var certHtml = await cert.Content.ReadAsStringAsync();
+        Assert.Contains("Recused (conflict of interest)", certHtml);
+        Assert.Contains("Trustee C", certHtml);
+
+        // Unanimous: one objection fails it at once. Withdrawn and expired resolutions take no more votes.
+        var unan = IdOf(await (await sec.PostAsJsonAsync("/api/resolutions", new { tenantId = tenant, committeeId = board, title = "Amend statutes", text = "...", closesAt = DateTimeOffset.UtcNow.AddDays(2), requiresUnanimous = true })).Content.ReadFromJsonAsync<JsonElement>());
+        await Member(a).PostAsJsonAsync($"/api/resolutions/{unan}/vote", Ballot("InFavor"));
+        Assert.Equal("Failed", (await (await Member(b).PostAsJsonAsync($"/api/resolutions/{unan}/vote", Ballot("Abstain"))).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());
+        var wd = IdOf(await (await sec.PostAsJsonAsync("/api/resolutions", new { tenantId = tenant, committeeId = board, title = "Withdrawn", text = "...", closesAt = DateTimeOffset.UtcNow.AddDays(1) })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.OK, (await sec.PostAsJsonAsync($"/api/resolutions/{wd}/withdraw", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Member(a).PostAsJsonAsync($"/api/resolutions/{wd}/vote", Ballot("InFavor"))).StatusCode);
+        var late = IdOf(await (await sec.PostAsJsonAsync("/api/resolutions", new { tenantId = tenant, committeeId = board, title = "Late", text = "...", closesAt = DateTimeOffset.UtcNow.AddDays(1) })).Content.ReadFromJsonAsync<JsonElement>());
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.CircularResolutions.SingleAsync(x => x.Id == late);
+            db.Entry(row).CurrentValues.SetValues(row with { ClosesAt = DateTimeOffset.UtcNow.AddMinutes(-1) });
+            Assert.Equal(4 * 4, await db.Notifications.CountAsync(n => n.TenantId == tenant && n.Title.StartsWith("Written resolution")));
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal("Expired", (await sec.GetFromJsonAsync<JsonElement>($"/api/resolutions/{late}?tenantId={tenant}")).GetProperty("status").GetString());
+        Assert.Equal(4, (await sec.GetFromJsonAsync<JsonElement>($"/api/resolutions?tenantId={tenant}&committeeId={board}")).GetArrayLength());
+        Assert.Equal(HttpStatusCode.Forbidden, (await ClientAs(Guid.NewGuid(), ["meeting:read"], a).GetAsync($"/api/resolutions?tenantId={tenant}")).StatusCode);
+    }
 }
 
