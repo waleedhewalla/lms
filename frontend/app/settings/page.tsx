@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { CALENDAR_MODES, CalendarMode, formatDate, getCalendarMode, setCalendarMode } from "../../lib/dates";
 import { useTranslation } from "../../components/TranslationProvider";
-import { api } from "../../lib/api";
+import { api, apiBase, authHeaders } from "../../lib/api";
 import { Card, Field, Page, Table, attempt, useL, useTenant } from "../../components/Ui";
 
 type Me = { subject: string; tenantId: string | null; permissions: string[]; person: { id: string; fullName: string } | null };
@@ -28,6 +28,13 @@ export default function SettingsPage() {
   const [hours, setHours] = useState(72);
   const [escalate, setEscalate] = useState(120);
 
+  const [subjectId, setSubjectId] = useState("");
+  const exportData = (personId: string) => attempt(setErr, async () => {
+    const res = await fetch(`${apiBase()}/api/people/${personId}/personal-data?tenantId=${tenantId}`, { headers: authHeaders() });
+    if (!res.ok) throw new Error(`personal-data → ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a"); a.href = url; a.download = `personal-data-${personId.slice(0, 8)}.json`; a.click(); URL.revokeObjectURL(url);
+  });
   const load = () => attempt(setErr, async () => {
     setOk("");
     setMe(await api<Me>("/api/auth/me"));
@@ -63,6 +70,20 @@ export default function SettingsPage() {
           <p style={{ fontSize: "0.8rem", opacity: 0.7 }}>
             {L("Applies to every date in the app on this device. Report exports can add Hijri columns.",
                "يُطبَّق على جميع التواريخ في هذا الجهاز. ويمكن لتصدير التقارير إضافة أعمدة بالتاريخ الهجري.")}</p>
+        </Card>
+        <Card title={L("My data", "بياناتي")}>
+          <p style={{ marginTop: 0, fontSize: "0.85rem", opacity: 0.8 }}>
+            {L("Download everything EduNexus holds about you (PDPL right of access). Each export is recorded in the audit trail.",
+               "نزّل جميع البيانات التي يحتفظ بها النظام عنك (حق الوصول وفق نظام حماية البيانات الشخصية). يُسجَّل كل تصدير في سجل التدقيق.")}</p>
+          <button className="btn" disabled={!me?.person} onClick={() => me?.person && exportData(me.person.id)}>
+            {L("Download my data", "تنزيل بياناتي")}</button>
+          {!me?.person && <p style={{ fontSize: "0.8rem", opacity: 0.7 }}>{L("Load your account first; it must be linked to a person.", "حمّل حسابك أولاً؛ يجب أن يكون مرتبطاً بشخص.")}</p>}
+          {me?.permissions.includes("privacy:manage") && (
+            <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.75rem" }}>
+              <Field label={L("Privacy officer: export for person ID", "مسؤول الخصوصية: تصدير بيانات معرّف شخص")}>
+                <input className="input" value={subjectId} onChange={(e) => setSubjectId(e.target.value)} /></Field>
+              <button className="btn btn-secondary" disabled={!subjectId} onClick={() => exportData(subjectId.trim())}>{L("Export", "تصدير")}</button>
+            </div>)}
         </Card>
         <Card title={L("My account", "حسابي")}>
           {!me ? <p style={{ opacity: 0.7 }}>{L("Load to see your account.", "حمّل لعرض حسابك.")}</p> : (<>
