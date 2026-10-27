@@ -72,6 +72,14 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **Privacy notice:** publish a policy with code `PRIVACY` and it appears without sign-in at `/privacy?tenant=<slug>`, linked from every page.
 - **Erasure (right to destruction):** a privacy officer proposes erasing a person in Settings, and a second officer approves. Executing it replaces the name with a pseudonym ("Former member XXXXXXXX"), clears the email and rank, deactivates the person, and deletes their role assignments, delegations, notifications, preferences, follows and document shares. Votes, approvals, minutes and the audit trail are kept under the pseudonym. Erasure is refused while correspondence involving the person is under a legal hold. Migration R17 adds one tenant table under row-level security.
 
+## Accreditation and strategy (Wave I)
+- **Standards library:** load NCAAA Institutional (8 standards), NCAAA Programmatic (6) or ABET engineering general criteria (8, with student outcomes 3.1–3.7) in one click. Built-in criteria are short summaries; paste the official criteria from your handbook as CSV (`standardCode,standardTitle,criterionCode,criterionText`) to replace them by code. A malformed file imports nothing.
+- **Evidence crosswalk** (`/accreditation`): every criterion shows its evidence count, open findings and a status: Met, Partial (an open major or minor finding), or Not met (no evidence). Tick several criteria, even from different frameworks, and cite one record (document, policy, procedure, decision, meeting, committee, task, KPI or letter) against all of them at once. "Evidence used across criteria" lists the records that serve more than one criterion.
+- **Findings and corrective actions:** actions move Open → In progress → Done → Verified. The assignee cannot verify their own action, and a finding closes only when all its actions are verified.
+- **Self-study report:** a printable HTML report per framework, in English or Arabic (RTL). It has a readiness summary, then each standard and criterion with its status, cited evidence (with live KPI values), findings and actions, dated in Gregorian and Hijri.
+- **Strategy scorecard** (`/strategy`): KPIs have a baseline and a direction ("lower is better" for rates such as dropout). Status is Achieved, On track (≥75% of the way from baseline to target), At risk (≥50%) or Off track. Each reading is kept with its period, so the scorecard shows a trend; KPIs cited as accreditation evidence are flagged.
+- New Keycloak group `edunexus-quality-officers`. Migration R18 adds `KpiReadings` (row-level security), `Standards.Framework`, and `Kpis.Baseline` / `Kpis.LowerIsBetter`.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

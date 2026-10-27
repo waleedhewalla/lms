@@ -225,7 +225,8 @@ public sealed record DocumentShare(
     Guid Id, Guid TenantId, Guid DocumentId, Guid PersonId,
     DateTimeOffset SharedAt, DateTimeOffset? ExpiresAt);
 
-public sealed record Standard(Guid Id, Guid TenantId, string Code, string Title);
+/// <summary>An accreditation standard. <see cref="Framework"/> groups standards (e.g. NCAAA-I, ABET-EAC, or Custom).</summary>
+public sealed record Standard(Guid Id, Guid TenantId, string Code, string Title, string Framework = "Custom");
 
 public sealed record Criterion(Guid Id, Guid TenantId, Guid StandardId, string Code, string Text);
 
@@ -248,7 +249,12 @@ public sealed record StrategicPlan(Guid Id, Guid TenantId, string Title, int Yea
 public sealed record Objective(Guid Id, Guid TenantId, Guid PlanId, string Code, string Text);
 
 public sealed record Kpi(
-    Guid Id, Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string Unit);
+    Guid Id, Guid TenantId, Guid ObjectiveId, string Name, double Target, double Current, string Unit,
+    double? Baseline = null, bool LowerIsBetter = false);
+
+/// <summary>One recorded KPI value for a period (e.g. "2026-Q3" or "1447"). Kept as history; the KPI holds the latest.</summary>
+public sealed record KpiReading(
+    Guid Id, Guid TenantId, Guid KpiId, double Value, string Period, string? Note, string RecordedBy, DateTimeOffset RecordedAt);
 
 // ============================ R5 — AI & Ecosystem ============================
 
@@ -516,4 +522,143 @@ public static class Erasure
     /// <summary>The directory record after erasure: no name, no email, no rank, deactivated.</summary>
     public static Person Pseudonymise(Person p) =>
         p with { FullName = PseudonymFor(p.Id), Email = null, AcademicRank = null, IsActive = false };
+}
+
+// ============================ Wave I — Accreditation readiness & strategy scorecard ============================
+
+public enum CriterionStatus { Met, Partial, NotMet }
+public enum KpiStatus { Achieved, OnTrack, AtRisk, OffTrack }
+
+public static class Accreditation
+{
+    /// <summary>
+    /// Readiness of one criterion: no evidence is NotMet; an open Major finding caps it at Partial,
+    /// as does an open Minor one; evidence with only observations (or none open) is Met.
+    /// </summary>
+    public static CriterionStatus Assess(int evidenceCount, int openMajor, int openMinor) =>
+        evidenceCount == 0 ? CriterionStatus.NotMet
+        : openMajor > 0 || openMinor > 0 ? CriterionStatus.Partial
+        : CriterionStatus.Met;
+
+    /// <summary>Share of criteria Met, Partial counting half, as a whole percentage.</summary>
+    public static int ReadinessPercent(IReadOnlyCollection<CriterionStatus> statuses) =>
+        statuses.Count == 0 ? 0
+        : (int)Math.Round(100.0 * statuses.Sum(s => s switch { CriterionStatus.Met => 1.0, CriterionStatus.Partial => 0.5, _ => 0.0 }) / statuses.Count);
+}
+
+public static class KpiProgress
+{
+    /// <summary>Progress from baseline (default 0) to target, as a fraction; direction-aware. Null if the target equals the baseline.</summary>
+    public static double? Fraction(Kpi k)
+    {
+        var from = k.Baseline ?? 0;
+        var span = k.LowerIsBetter ? from - k.Target : k.Target - from;
+        if (span == 0) return null;
+        var moved = k.LowerIsBetter ? from - k.Current : k.Current - from;
+        return moved / span;
+    }
+
+    /// <summary>Achieved at the target; on track from 75%; at risk from 50%; otherwise off track.</summary>
+    public static KpiStatus Status(Kpi k)
+    {
+        var met = k.LowerIsBetter ? k.Current <= k.Target : k.Current >= k.Target;
+        if (met) return KpiStatus.Achieved;
+        var f = Fraction(k) ?? 0;
+        return f >= 0.75 ? KpiStatus.OnTrack : f >= 0.5 ? KpiStatus.AtRisk : KpiStatus.OffTrack;
+    }
+}
+
+/// <summary>A framework the institution can load into its standards library.</summary>
+public sealed record FrameworkTemplate(string Code, string Name, string Body, IReadOnlyList<StandardTemplate> Standards);
+public sealed record StandardTemplate(string Code, string Title, IReadOnlyList<(string Code, string Text)> Criteria);
+
+/// <summary>
+/// Built-in standards library. Standard titles follow the published frameworks; criteria are short
+/// summaries for orientation. Institutions load the official sub-criteria text from their handbook
+/// with the CSV import, which updates these rows in place by code.
+/// </summary>
+public static class AccreditationLibrary
+{
+    private static StandardTemplate S(string code, string title, params (string, string)[] criteria) => new(code, title, criteria);
+
+    public static readonly IReadOnlyList<FrameworkTemplate> Frameworks =
+    [
+        new("NCAAA-I", "NCAAA Institutional Accreditation", "Education and Training Evaluation Commission (ETEC) — NCAAA",
+        [
+            S("NCAAA-I-1", "Mission, Vision and Strategic Planning", ("1.0", "Mission and vision are approved and guide a strategic plan that is implemented, monitored with KPIs and reviewed.")),
+            S("NCAAA-I-2", "Governance, Leadership and Management", ("2.0", "Governance bodies, leadership, quality assurance, policies and integrity are effective and documented.")),
+            S("NCAAA-I-3", "Teaching and Learning", ("3.0", "Learning outcomes, programme design, teaching quality and assessment are planned, measured and improved.")),
+            S("NCAAA-I-4", "Students", ("4.0", "Admission, student records, support services and student activities are fair, effective and evaluated.")),
+            S("NCAAA-I-5", "Faculty and Staff", ("5.0", "Recruitment, development, evaluation and retention of faculty and staff meet the institution's needs.")),
+            S("NCAAA-I-6", "Institutional Resources", ("6.0", "Financial resources, facilities, learning resources and IT support the mission and are managed well.")),
+            S("NCAAA-I-7", "Research and Innovation", ("7.0", "Research and innovation have a plan, support and outputs that are measured and reported.")),
+            S("NCAAA-I-8", "Community Partnership", ("8.0", "Community partnership activities are planned, delivered and evaluated for impact.")),
+        ]),
+        new("NCAAA-P", "NCAAA Programmatic Accreditation", "Education and Training Evaluation Commission (ETEC) — NCAAA",
+        [
+            S("NCAAA-P-1", "Mission and Goals", ("1.0", "The programme mission and goals are consistent with the institution's and guide its operations.")),
+            S("NCAAA-P-2", "Programme Management and Quality Assurance", ("2.0", "The programme is managed effectively with a working quality assurance system and KPIs.")),
+            S("NCAAA-P-3", "Teaching and Learning", ("3.0", "Graduate attributes and learning outcomes are defined, taught, assessed and improved.")),
+            S("NCAAA-P-4", "Students", ("4.0", "Admission, guidance, support and evaluation of students are effective.")),
+            S("NCAAA-P-5", "Teaching Staff", ("5.0", "Teaching staff are qualified, sufficient, developed and evaluated.")),
+            S("NCAAA-P-6", "Learning Resources, Facilities and Equipment", ("6.0", "Learning resources, facilities and equipment are adequate and evaluated.")),
+        ]),
+        new("ABET-EAC", "ABET Engineering (General Criteria)", "ABET Engineering Accreditation Commission",
+        [
+            S("ABET-1", "Students", ("1.0", "Student performance is evaluated and progress monitored; transfer and graduation policies are enforced.")),
+            S("ABET-2", "Program Educational Objectives", ("2.0", "Published objectives consistent with the mission, reviewed periodically with constituencies.")),
+            S("ABET-3", "Student Outcomes",
+                ("3.1", "Identify, formulate and solve complex engineering problems."),
+                ("3.2", "Apply engineering design to produce solutions that meet specified needs."),
+                ("3.3", "Communicate effectively with a range of audiences."),
+                ("3.4", "Recognise ethical and professional responsibilities and make informed judgements."),
+                ("3.5", "Function effectively on a team."),
+                ("3.6", "Develop and conduct experimentation, analyse and interpret data."),
+                ("3.7", "Acquire and apply new knowledge using appropriate learning strategies.")),
+            S("ABET-4", "Continuous Improvement", ("4.0", "Outcomes are regularly assessed and results are used to improve the programme.")),
+            S("ABET-5", "Curriculum", ("5.0", "Curriculum covers mathematics, science, engineering topics and a culminating design experience.")),
+            S("ABET-6", "Faculty", ("6.0", "Faculty are sufficient in number and competent to cover all curricular areas.")),
+            S("ABET-7", "Facilities", ("7.0", "Classrooms, laboratories, equipment and computing are adequate for the outcomes.")),
+            S("ABET-8", "Institutional Support", ("8.0", "Leadership, finances and staff are adequate to assure quality and continuity.")),
+        ]),
+    ];
+
+    public static FrameworkTemplate? Find(string code) =>
+        Frameworks.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>Minimal RFC 4180 reader: commas, double-quoted fields with "" escapes, CRLF or LF line ends.</summary>
+public static class CsvText
+{
+    public static List<string[]> Parse(string text)
+    {
+        var rows = new List<string[]>();
+        var row = new List<string>();
+        var field = new System.Text.StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (quoted)
+            {
+                if (c == '"' && i + 1 < text.Length && text[i + 1] == '"') { field.Append('"'); i++; }
+                else if (c == '"') quoted = false;
+                else field.Append(c);
+            }
+            else if (c == '"' && field.Length == 0) quoted = true;
+            else if (c == ',') { row.Add(field.ToString()); field.Clear(); }
+            else if (c == '\n' || c == '\r')
+            {
+                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                row.Add(field.ToString()); field.Clear();
+                if (row.Count > 1 || row[0].Length > 0) rows.Add([.. row]);
+                row.Clear();
+            }
+            else field.Append(c);
+        }
+        row.Add(field.ToString());
+        if (row.Count > 1 || row[0].Length > 0) rows.Add([.. row]);
+        if (rows.Count > 0 && rows[0].Length > 0) rows[0][0] = rows[0][0].TrimStart('﻿');
+        return rows;
+    }
 }

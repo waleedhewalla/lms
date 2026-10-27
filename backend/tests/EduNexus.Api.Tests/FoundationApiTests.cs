@@ -2383,5 +2383,119 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var list = await (await approver.GetAsync($"/api/privacy/erasure-requests?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(1, list.GetArrayLength());
     }
+    [Fact]
+    public async Task WaveI_Accreditation_Library_Crosswalk_SelfStudy_And_Strategy_Scorecard()
+    {
+        var tenant = Guid.NewGuid();
+        var tokens = factory.Services.GetRequiredService<DevTokenService>();
+        HttpClient As(string subject, Guid t, params string[] perms)
+        {
+            var c = factory.CreateClient();
+            Auth(c, tokens.Mint(subject, t, perms));
+            return c;
+        }
+        var qa = As("qa-lead", tenant, "quality:read", "quality:manage", "strategy:read", "strategy:manage");
+        var viewer = As("qa-viewer", tenant, "quality:read");
+
+        // Library: import is idempotent; unknown frameworks 404; read-only users cannot import.
+        var fws = await (await viewer.GetAsync("/api/quality/frameworks")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains(fws.EnumerateArray(), f => f.GetProperty("code").GetString() == "NCAAA-I");
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsJsonAsync("/api/quality/frameworks/NCAAA-I/import", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await qa.PostAsJsonAsync("/api/quality/frameworks/NOPE/import", new { tenantId = tenant })).StatusCode);
+        var first = await (await qa.PostAsJsonAsync("/api/quality/frameworks/ABET-EAC/import", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(8, first.GetProperty("standardsCreated").GetInt32());
+        Assert.Equal(14, first.GetProperty("criteriaCreated").GetInt32());
+        var again = await (await qa.PostAsJsonAsync("/api/quality/frameworks/ABET-EAC/import", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, again.GetProperty("criteriaCreated").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync("/api/quality/frameworks/NCAAA-I/import", new { tenantId = tenant })).StatusCode);
+
+        // CSV refresh: replaces the summary text by code and adds sub-criteria; malformed files import nothing.
+        var csv = "standardCode,standardTitle,criterionCode,criterionText\nNCAAA-I-1,\"Mission, Vision and Strategic Planning\",1.0,Official text\nNCAAA-I-1,\"Mission, Vision and Strategic Planning\",1.1,Approved mission\n";
+        var imp = await (await qa.PostAsJsonAsync("/api/quality/standards/import", new { tenantId = tenant, framework = "NCAAA-I", csv })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, imp.GetProperty("criteriaCreated").GetInt32());
+        Assert.Equal(1, imp.GetProperty("updated").GetInt32());
+        Assert.Equal(HttpStatusCode.BadRequest, (await qa.PostAsJsonAsync("/api/quality/standards/import", new { tenantId = tenant, framework = "NCAAA-I", csv = "a,b\n1,2" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await qa.PostAsJsonAsync("/api/quality/standards/import",
+            new { tenantId = tenant, framework = "Custom", csv = "standardCode,standardTitle,criterionCode,criterionText\nABET-1,Students,1.0,x" })).StatusCode);
+
+        // One policy cited against two frameworks' criteria in one step (the crosswalk).
+        var criteria = (await (await viewer.GetAsync($"/api/quality/criteria?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().ToList();
+        var standards = (await (await viewer.GetAsync($"/api/quality/standards?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().ToList();
+        Guid Crit(string std, string code) => criteria.Single(c => c.GetProperty("code").GetString() == code
+            && c.GetProperty("standardId").GetGuid() == standards.Single(s => s.GetProperty("code").GetString() == std).GetProperty("id").GetGuid()).GetProperty("id").GetGuid();
+        var ncaaa11 = Crit("NCAAA-I-1", "1.1");
+        var abet4 = Crit("ABET-4", "4.0");
+        var policy = new Policy(Guid.NewGuid(), tenant, "QA-01", "Quality assurance policy", "Text", PolicyStatus.Published, 1);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Policies.Add(policy);
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.BadRequest, (await qa.PostAsJsonAsync("/api/quality/evidence/map", new { tenantId = tenant, entityType = "Spaceship", entityId = policy.Id, criterionIds = new[] { abet4 } })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await qa.PostAsJsonAsync("/api/quality/evidence/map", new { tenantId = tenant, entityType = "Policy", entityId = Guid.NewGuid(), criterionIds = new[] { abet4 } })).StatusCode);
+        var mapped = await (await qa.PostAsJsonAsync("/api/quality/evidence/map", new { tenantId = tenant, entityType = "policy", entityId = policy.Id, criterionIds = new[] { ncaaa11, abet4 }, note = "Section 3" })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, mapped.GetProperty("added").GetInt32());
+        var remap = await (await qa.PostAsJsonAsync("/api/quality/evidence/map", new { tenantId = tenant, entityType = "Policy", entityId = policy.Id, criterionIds = new[] { abet4 } })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, remap.GetProperty("skipped").GetInt32());
+        var ev = (await (await viewer.GetAsync($"/api/quality/evidence?tenantId={tenant}&entityType=Policy&entityId={policy.Id}")).Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().ToList();
+        Assert.Equal(2, ev.Count);
+        Assert.Equal("QA-01 — Quality assurance policy", ev[0].GetProperty("title").GetString());
+
+        // A major finding caps the criterion at Partial until its verified action lets it close.
+        var finding = IdOf(await (await qa.PostAsJsonAsync("/api/quality/findings", new { tenantId = tenant, criterionId = abet4, severity = "Major", text = "No closing of the loop" })).Content.ReadFromJsonAsync<JsonElement>());
+        var assignee = Guid.NewGuid();
+        var action = IdOf(await (await qa.PostAsJsonAsync("/api/quality/corrective-actions", new { tenantId = tenant, findingId = finding, assigneeId = assignee, description = "Annual outcomes review" })).Content.ReadFromJsonAsync<JsonElement>());
+        var cw = await (await viewer.GetAsync($"/api/quality/crosswalk?tenantId={tenant}&framework=ABET-EAC")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Partial", cw.GetProperty("rows").EnumerateArray().Single(r => r.GetProperty("criterionId").GetGuid() == abet4).GetProperty("status").GetString());
+        Assert.Equal(14, cw.GetProperty("rows").GetArrayLength());
+        Assert.Contains("NCAAA-I-1 1.1", cw.GetProperty("shared")[0].GetProperty("criteria").EnumerateArray().Select(c => c.GetString()));
+        Assert.Equal(HttpStatusCode.Conflict, (await qa.PostAsJsonAsync($"/api/quality/findings/{finding}/close", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await qa.PostAsJsonAsync($"/api/quality/corrective-actions/{action}/status", new { tenantId = tenant, status = "Verified" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync($"/api/quality/corrective-actions/{action}/status", new { tenantId = tenant, status = "Done" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync($"/api/quality/corrective-actions/{action}/status", new { tenantId = tenant, status = "Verified" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync($"/api/quality/findings/{finding}/close", new { tenantId = tenant })).StatusCode);
+        var all = await (await viewer.GetAsync($"/api/quality/crosswalk?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, all.GetProperty("met").GetInt32());
+        var shared = all.GetProperty("shared").EnumerateArray().Single();
+        Assert.Equal(2, shared.GetProperty("criteria").GetArrayLength());
+
+        // Self-study report: HTML attachment, encoded, bilingual.
+        var report = await viewer.GetAsync($"/api/quality/self-study?tenantId={tenant}&framework=ABET-EAC");
+        Assert.Equal(HttpStatusCode.OK, report.StatusCode);
+        Assert.Equal("text/html", report.Content.Headers.ContentType!.MediaType);
+        var html = await report.Content.ReadAsStringAsync();
+        Assert.Contains("ABET Engineering (General Criteria)", html);
+        Assert.Contains("QA-01 — Quality assurance policy", html);
+        Assert.Contains("Annual outcomes review", html);
+        var arHtml = await (await viewer.GetAsync($"/api/quality/self-study?tenantId={tenant}&framework=NCAAA-I&lang=ar")).Content.ReadAsStringAsync();
+        Assert.Contains("dir=\"rtl\"", arHtml);
+        Assert.Contains("مستوفى", arHtml);
+        Assert.Equal(HttpStatusCode.NotFound, (await viewer.GetAsync($"/api/quality/self-study?tenantId={tenant}&framework=NONE")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await As("outsider", Guid.NewGuid(), "quality:read").GetAsync($"/api/quality/crosswalk?tenantId={tenant}")).StatusCode);
+
+        // Strategy scorecard: direction-aware status, reading history and trend, KPI cited as evidence.
+        var plan = IdOf(await (await qa.PostAsJsonAsync("/api/strategy/plans", new { tenantId = tenant, title = "Strategic Plan 2025–2030", yearFrom = 2025, yearTo = 2030 })).Content.ReadFromJsonAsync<JsonElement>());
+        var obj = IdOf(await (await qa.PostAsJsonAsync("/api/strategy/objectives", new { tenantId = tenant, planId = plan, code = "O1", text = "Student success" })).Content.ReadFromJsonAsync<JsonElement>());
+        var dropout = IdOf(await (await qa.PostAsJsonAsync("/api/strategy/kpis", new { tenantId = tenant, objectiveId = obj, name = "First-year dropout", target = 10, current = 20, unit = "%", baseline = 20, lowerIsBetter = true })).Content.ReadFromJsonAsync<JsonElement>());
+        var grad = IdOf(await (await qa.PostAsJsonAsync("/api/strategy/kpis", new { tenantId = tenant, objectiveId = obj, name = "Graduation rate", target = 80, current = 82, unit = "%" })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync($"/api/strategy/kpis/{dropout}/reading", new { tenantId = tenant, current = 16, period = "1446" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync($"/api/strategy/kpis/{dropout}/reading", new { tenantId = tenant, current = 12, period = "1447", note = "Mentoring programme" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await qa.PostAsJsonAsync("/api/quality/evidence/map", new { tenantId = tenant, entityType = "Kpi", entityId = dropout, criterionIds = new[] { ncaaa11 } })).StatusCode);
+        var card = await (await qa.GetAsync($"/api/strategy/plans/{plan}/scorecard?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>();
+        var kpis = card.GetProperty("objectives")[0].GetProperty("kpis").EnumerateArray().ToList();
+        var d = kpis.Single(k => k.GetProperty("id").GetGuid() == dropout);
+        Assert.Equal("OnTrack", d.GetProperty("status").GetString());
+        Assert.Equal(80, d.GetProperty("progress").GetInt32());
+        Assert.Equal("improving", d.GetProperty("trend").GetString());
+        Assert.Equal(2, d.GetProperty("readings").GetArrayLength());
+        Assert.Equal(1, d.GetProperty("accreditationEvidence").GetInt32());
+        Assert.Equal("Achieved", kpis.Single(k => k.GetProperty("id").GetGuid() == grad).GetProperty("status").GetString());
+        Assert.Equal(1, card.GetProperty("summary").GetProperty("OnTrack").GetInt32());
+        var readings = await (await qa.GetAsync($"/api/strategy/kpis/{dropout}/readings?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Mentoring programme", readings[1].GetProperty("note").GetString());
+        var ncaaaHtml = await (await viewer.GetAsync($"/api/quality/self-study?tenantId={tenant}&framework=NCAAA-I")).Content.ReadAsStringAsync();
+        Assert.Contains("First-year dropout — 12 / 10 %", ncaaaHtml);
+    }
 }
 

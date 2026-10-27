@@ -439,6 +439,32 @@
       }
     },
     {
+      "name": "edunexus-quality-officers",
+      "path": "/edunexus-quality-officers",
+      "subGroups": [],
+      "attributes": {
+        "description": [
+          "Quality and accreditation office: standards library, evidence crosswalk, findings and corrective actions, self-study reports, strategy scorecard."
+        ],
+        "permission": [
+          "committee:read",
+          "decision:read",
+          "document:read",
+          "inbox:read",
+          "meeting:read",
+          "notification:read",
+          "org:read",
+          "person:read",
+          "policy:read",
+          "quality:manage",
+          "quality:read",
+          "strategy:manage",
+          "strategy:read",
+          "task:read"
+        ]
+      }
+    },
+    {
       "name": "edunexus-staff",
       "path": "/edunexus-staff",
       "attributes": {
