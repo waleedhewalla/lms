@@ -2614,5 +2614,82 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(4, (await sec.GetFromJsonAsync<JsonElement>($"/api/resolutions?tenantId={tenant}&committeeId={board}")).GetArrayLength());
         Assert.Equal(HttpStatusCode.Forbidden, (await ClientAs(Guid.NewGuid(), ["meeting:read"], a).GetAsync($"/api/resolutions?tenantId={tenant}")).StatusCode);
     }
+    [Fact]
+    public async Task WaveJ_Policy_Quiz_Version_Reattestation_And_Cycles()
+    {
+        var boot = factory.CreateClient();
+        Auth(boot, Mint(Guid.NewGuid(), ["tenant:create"]));
+        var tenant = IdOf(await (await boot.PostAsJsonAsync("/api/tenants", new { slug = $"att-{Guid.NewGuid():N}"[..20], name = "Attest University" })).Content.ReadFromJsonAsync<JsonElement>());
+        var owner = factory.CreateClient();
+        Auth(owner, Mint(tenant, ["person:create", "person:read", "policy:create", "policy:read", "analytics:read"]));
+        var huda = IdOf(await (await owner.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Huda" })).Content.ReadFromJsonAsync<JsonElement>());
+        var omar = IdOf(await (await owner.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Omar" })).Content.ReadFromJsonAsync<JsonElement>());
+        var policy = IdOf(await (await owner.PostAsJsonAsync("/api/policies", new { tenantId = tenant, code = "IT-01", title = "Acceptable use", content = "Do not share passwords." })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync($"/api/policies/{policy}/publish", new { tenantId = tenant })).StatusCode);
+
+        // Configure a quiz: validation first.
+        var bad = await owner.PutAsJsonAsync($"/api/policies/{policy}/attestation", new { tenantId = tenant, questions = new[] { new { question = "Q", options = new[] { "only one" }, correctIndex = 0 } } });
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PutAsJsonAsync($"/api/policies/{policy}/attestation", new { tenantId = tenant, attestEveryMonths = 0 })).StatusCode);
+        var quiz = new[]
+        {
+            new { question = "May you share your password with IT support?", options = new[] { "Yes", "No", "Only by phone" }, correctIndex = 1 },
+            new { question = "Report a suspected phishing email to…", options = new[] { "Nobody", "The security team" }, correctIndex = 1 },
+        };
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync($"/api/policies/{policy}/attestation", new { tenantId = tenant, quizPassPercent = 100, questions = quiz })).StatusCode);
+        var hudaC = ClientAs(tenant, ["policy:read"], huda);
+        var seen = await hudaC.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}/quiz?tenantId={tenant}");
+        Assert.Equal(2, seen.GetProperty("questions").GetArrayLength());
+        Assert.Equal(JsonValueKind.Null, seen.GetProperty("questions")[0].GetProperty("correctIndex").ValueKind);   // answers never shown to takers
+        Assert.Equal(1, (await owner.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}/quiz?tenantId={tenant}")).GetProperty("questions")[0].GetProperty("correctIndex").GetInt32());
+
+        // Quiz gates the acknowledgement (both the old and the new route); a failed attempt stores nothing.
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await hudaC.PostAsJsonAsync($"/api/policies/{policy}/acknowledge", new { tenantId = tenant })).StatusCode);
+        var fail = await hudaC.PostAsJsonAsync($"/api/policies/{policy}/attest", new { tenantId = tenant, answers = new[] { 1, 0 } });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, fail.StatusCode);
+        Assert.Equal(50, (await fail.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("score").GetInt32());
+        var pass = await hudaC.PostAsJsonAsync($"/api/policies/{policy}/attest", new { tenantId = tenant, answers = new[] { 1, 1 } });
+        Assert.Equal(HttpStatusCode.Created, pass.StatusCode);
+        var ack = await pass.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(100, ack.GetProperty("quizScore").GetInt32());
+        Assert.Equal(1, ack.GetProperty("policyVersion").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict, (await hudaC.PostAsJsonAsync($"/api/policies/{policy}/attest", new { tenantId = tenant, answers = new[] { 1, 1 } })).StatusCode);
+
+        var status = (await owner.GetFromJsonAsync<JsonElement>($"/api/policies/attestation-status?tenantId={tenant}"))[0];
+        Assert.Equal(1, status.GetProperty("current").GetInt32());
+        Assert.Equal(1, status.GetProperty("outstanding").GetInt32());
+        Assert.Equal(1, (await (await owner.PostAsJsonAsync($"/api/policies/{policy}/remind", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("reminded").GetInt32());
+        var omarTodo = await ClientAs(tenant, ["policy:read"], omar).GetFromJsonAsync<JsonElement>($"/api/policies/my-attestations?tenantId={tenant}");
+        Assert.Equal("never", omarTodo[0].GetProperty("reason").GetString());
+
+        // A new version makes everyone re-attest.
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync($"/api/policies/{policy}/versions", new { tenantId = tenant, content = "Do not share passwords or tokens.", changeNote = "MFA tokens" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync($"/api/policies/{policy}/publish", new { tenantId = tenant })).StatusCode);
+        var todo = await hudaC.GetFromJsonAsync<JsonElement>($"/api/policies/my-attestations?tenantId={tenant}");
+        Assert.False(todo[0].GetProperty("current").GetBoolean());
+        Assert.Equal("new-version", todo[0].GetProperty("reason").GetString());
+        var pending = await owner.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}/pending?tenantId={tenant}");
+        Assert.Contains(pending.EnumerateArray(), x => x.GetProperty("id").GetGuid() == huda);
+        Assert.Equal(2, (await (await hudaC.PostAsJsonAsync($"/api/policies/{policy}/attest", new { tenantId = tenant, answers = new[] { 1, 1 } })).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("policyVersion").GetInt32());
+
+        // A yearly cycle: an attestation older than 12 months no longer counts.
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync($"/api/policies/{policy}/attestation", new { tenantId = tenant, attestEveryMonths = 12 })).StatusCode);
+        Assert.Equal(2, (await owner.GetFromJsonAsync<JsonElement>($"/api/policies/{policy}/quiz?tenantId={tenant}")).GetProperty("questions").GetArrayLength());  // quiz kept when not resent
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.PolicyAcknowledgements.SingleAsync(a => a.PolicyId == policy && a.PersonId == huda && a.PolicyVersion == 2);
+            db.Entry(row).CurrentValues.SetValues(row with { At = DateTimeOffset.UtcNow.AddMonths(-13) });
+            await db.SaveChangesAsync();
+            Assert.Equal(2, await db.AuditEvents.CountAsync(a => a.TenantId == tenant && a.Action == "PolicyQuizFailed"));
+        }
+        Assert.Equal("cycle", (await hudaC.GetFromJsonAsync<JsonElement>($"/api/policies/my-attestations?tenantId={tenant}"))[0].GetProperty("reason").GetString());
+        Assert.Equal(0, (await owner.GetFromJsonAsync<JsonElement>($"/api/policies/attestation-status?tenantId={tenant}"))[0].GetProperty("current").GetInt32());
+        Assert.Equal(HttpStatusCode.Created, (await hudaC.PostAsJsonAsync($"/api/policies/{policy}/attest", new { tenantId = tenant, answers = new[] { 1, 1 } })).StatusCode);
+        var mine = (await hudaC.GetFromJsonAsync<JsonElement>($"/api/policies/my-attestations?tenantId={tenant}"))[0];
+        Assert.True(mine.GetProperty("current").GetBoolean());
+        Assert.True(mine.GetProperty("dueAgain").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddMonths(11));
+        Assert.Equal(HttpStatusCode.Forbidden, (await hudaC.PutAsJsonAsync($"/api/policies/{policy}/attestation", new { tenantId = tenant, attestEveryMonths = 1 })).StatusCode);
+    }
 }
 

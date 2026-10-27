@@ -88,6 +88,13 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **Written resolutions** (`/board`): the secretary circulates a resolution with a closing time; members are notified and respond In favour, Against, Abstain or Recuse. It passes with a majority of all eligible members (or all of them when unanimous is required) as soon as the result is certain, fails when it no longer can pass, and expires at the deadline. Closed resolutions produce a printable certificate listing every member's response.
 - Migration R19 adds `AgendaRecusals`, `InterestDeclarations`, `CircularResolutions` and `ResolutionVotes` (all under row-level security), `Committees.QuorumPercent` and `MeetingVotes.RecordedBy`.
 
+## Policy attestation (Wave J)
+- **Version-bound acknowledgements:** an acknowledgement records the policy version. Publishing a new version asks everyone to acknowledge again. Existing acknowledgements are carried over to each policy's current version on upgrade (migration R20), so nobody is asked twice by the upgrade itself.
+- **Re-attestation cycle:** a policy can require re-acknowledgement every N months (e.g. 12 for an annual code-of-conduct sign-off).
+- **Comprehension quiz:** policy owners add up to 20 multiple-choice questions and a pass mark. People read the policy and answer before acknowledging. Failed attempts are audited and store nothing; answers are never shown to takers.
+- **My attestations** on the Policies page lists what each person still has to do and why (never, new version, cycle due). Owners see **attestation compliance** per policy and can send in-app reminders to everyone outstanding.
+- The governance dashboard and policy report count only current attestations.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

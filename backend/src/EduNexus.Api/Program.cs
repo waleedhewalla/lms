@@ -179,6 +179,7 @@ app.MapRecordsEndpoints();
 app.MapPrivacyEndpoints();
 app.MapAccreditationEndpoints();
 app.MapBoardEndpoints();
+app.MapPolicyAttestationEndpoints();
 
 if (args.Contains("--migrate-only"))
 {

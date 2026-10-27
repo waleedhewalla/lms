@@ -48,6 +48,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<InterestDeclaration> InterestDeclarations => Set<InterestDeclaration>();
     public DbSet<CircularResolution> CircularResolutions => Set<CircularResolution>();
     public DbSet<ResolutionVote> ResolutionVotes => Set<ResolutionVote>();
+    public DbSet<PolicyQuizQuestion> PolicyQuizQuestions => Set<PolicyQuizQuestion>();
     public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
     public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
     public DbSet<IntegrationDelivery> IntegrationDeliveries => Set<IntegrationDelivery>();
@@ -277,11 +278,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.QuizPassPercent).HasDefaultValue(80);
         });
         b.Entity<PolicyAcknowledgement>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId }).IsUnique();
+            // One row per attestation; a person re-attests on a new version or cycle.
+            e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId, x.PolicyVersion });
+            e.Property(x => x.PolicyVersion).HasDefaultValue(1);
+        });
+        b.Entity<PolicyQuizQuestion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PolicyId, x.Order });
+            e.Property(x => x.Question).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.OptionsText).HasMaxLength(4000).IsRequired();
+            e.Ignore(x => x.Options);
         });
         b.Entity<Document>(e =>
         {

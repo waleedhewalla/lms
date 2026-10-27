@@ -349,30 +349,8 @@ public static class GovernanceEndpoints
             await scope.CommitAsync(ct);
             return Results.Ok(p);
         });
-        policies.MapPost("/{id:guid}/acknowledge", async (AppDbContext db, HttpContext ctx, Guid id, AcknowledgePolicyReq req, CancellationToken ct) =>
-        {
-            if (!ctx.User.HasPermission("policy:read")) return Results.Forbid();
-            if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
-            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            var p = await db.Policies.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
-            if (p is null) return Results.NotFound(new { error = "Policy not found." });
-            if (p.Status != PolicyStatus.Published) return Results.Conflict(new { error = "Cannot acknowledge unpublished policy." });
-            // People acknowledge for themselves only: the person comes from the token, never the body.
-            var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
-            if (actor is null || (req.PersonId is { } claimed && claimed != actor)) return Results.Forbid();
-            var ack = new PolicyAcknowledgement(Guid.NewGuid(), req.TenantId, id, actor.Value, DateTimeOffset.UtcNow);
-            db.PolicyAcknowledgements.Add(ack);
-            DomainEvents.Record(db, req.TenantId, "PolicyAcknowledged", "PolicyAcknowledged",
-                nameof(Policy), id.ToString(),
-                payload: new { tenantId = req.TenantId, policyId = id, personId = actor }, actorId: actor, details: actor.ToString());
-            try { await db.SaveChangesAsync(ct); }
-            catch (DbUpdateException ex) when (IsUniqueConflict(ex))
-            {
-                return Results.Conflict(new { error = "Person has already acknowledged this policy." });
-            }
-            await scope.CommitAsync(ct);
-            return Results.Created($"/api/policies/{id}/acknowledgements", ack);
-        });
+        policies.MapPost("/{id:guid}/acknowledge", (AppDbContext db, HttpContext ctx, Guid id, AcknowledgePolicyReq req, CancellationToken ct) =>
+            PolicyAttestationEndpoints.AttestAsync(db, ctx, id, req.TenantId, req.PersonId, req.Answers, ct));
         policies.MapGet("/{id:guid}/pending", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("policy:read")) return Results.Forbid();
@@ -380,7 +358,9 @@ public static class GovernanceEndpoints
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var p = await db.Policies.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
             if (p is null) return Results.NotFound(new { error = "Policy not found." });
-            var ackedIds = await db.PolicyAcknowledgements.Where(a => a.TenantId == tenantId && a.PolicyId == id).Select(a => a.PersonId).ToListAsync(ct);
+            // Pending means no current attestation: never, an older version, or the cycle came round.
+            var ackedIds = PolicyAttestationEndpoints.CurrentAttesters(
+                await db.PolicyAcknowledgements.Where(a => a.TenantId == tenantId && a.PolicyId == id).ToListAsync(ct), p, DateTimeOffset.UtcNow);
             var pending = await db.People.Where(person => person.TenantId == tenantId && !ackedIds.Contains(person.Id)).ToListAsync(ct);
             return Results.Ok(pending);
         });

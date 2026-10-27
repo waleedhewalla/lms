@@ -203,10 +203,16 @@ public sealed record DecisionAction(
 
 public enum PolicyStatus { Draft, Published, Retired, Review, LegalReview, Approval }
 
+/// <summary>
+/// An institutional policy. <see cref="AttestEveryMonths"/>: people re-acknowledge on that cycle (null = once per version).
+/// <see cref="QuizPassPercent"/> applies when the policy has quiz questions.
+/// </summary>
 public sealed record Policy(Guid Id, Guid TenantId, string Code, string Title, string Content, PolicyStatus Status, int Version,
-    DateTimeOffset? NextReviewAt = null, Guid? OwnerId = null);
+    DateTimeOffset? NextReviewAt = null, Guid? OwnerId = null, int? AttestEveryMonths = null, int QuizPassPercent = 80);
 
-public sealed record PolicyAcknowledgement(Guid Id, Guid TenantId, Guid PolicyId, Guid PersonId, DateTimeOffset At);
+/// <summary>An attestation: the person read (and, when there is a quiz, understood) a given version of the policy.</summary>
+public sealed record PolicyAcknowledgement(Guid Id, Guid TenantId, Guid PolicyId, Guid PersonId, DateTimeOffset At,
+    int PolicyVersion = 1, int? QuizScore = null);
 
 // ============================ R4 — Institutional Intelligence ============================
 
@@ -721,4 +727,30 @@ public static class BoardRules
 
     /// <summary>A member counts on a date unless their term had ended. (JoinedAt is when the row was entered, so it is not used.)</summary>
     public static bool IsCurrent(CommitteeMember m, DateTimeOffset at) => m.TermEndsAt is null || m.TermEndsAt > at;
+}
+
+/// <summary>A multiple-choice question checking that a policy was understood. Options are stored one per line.</summary>
+public sealed record PolicyQuizQuestion(Guid Id, Guid TenantId, Guid PolicyId, int Order, string Question, string OptionsText, int CorrectIndex)
+{
+    public string[] Options => OptionsText.Split('\n');
+}
+
+public static class PolicyAttestation
+{
+    /// <summary>An attestation counts if it is for the current version and, with a cycle, recent enough.</summary>
+    public static bool IsCurrent(PolicyAcknowledgement a, Policy p, DateTimeOffset now) =>
+        a.PolicyVersion == p.Version && (p.AttestEveryMonths is not { } months || a.At > now.AddMonths(-months));
+
+    /// <summary>When the person's attestation falls due again (null: never, or not attested).</summary>
+    public static DateTimeOffset? DueAgain(PolicyAcknowledgement? a, Policy p) =>
+        a is null || p.AttestEveryMonths is not { } months ? null : a.At.AddMonths(months);
+
+    /// <summary>Percentage of questions answered correctly; unanswered counts as wrong.</summary>
+    public static int Score(IReadOnlyList<PolicyQuizQuestion> questions, IReadOnlyList<int>? answers)
+    {
+        if (questions.Count == 0) return 100;
+        var ordered = questions.OrderBy(q => q.Order).ToList();
+        var right = ordered.Where((q, i) => answers is not null && i < answers.Count && answers[i] == q.CorrectIndex).Count();
+        return (int)Math.Floor(100.0 * right / ordered.Count);
+    }
 }

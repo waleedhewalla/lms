@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { attempt, Card, Field, fmtDate, HijriHint, Page, Table, useL, useTenant } from "../../components/Ui";
+import { AttestationSettings, AttestPanel, MyAttestations } from "../../components/PolicyAttestation";
 
 type Policy = { id: string; code: string; title: string; content: string; status: string; version: number; nextReviewAt: string | null };
 type Version = { id: string; version: number; title: string; changeNote: string | null; createdAt: string };
@@ -28,14 +29,17 @@ export default function PoliciesPage() {
   const [pCode, setPCode] = useState("");
   const [pTitle, setPTitle] = useState("");
   const [pSteps, setPSteps] = useState("");
+  const [attesting, setAttesting] = useState(false);
+  const [refresh, setRefresh] = useState(0);
 
   const load = () => attempt(setErr, async () => {
     setPolicies(await api<Policy[]>(`/api/policies?tenantId=${tenantId}`));
     setUpcoming(await api<Policy[]>(`/api/policies/reviews/upcoming?tenantId=${tenantId}&days=60`));
+    setRefresh((n) => n + 1);
   });
   const open = (id: string) => attempt(setErr, async () => {
     const d = await api<Detail>(`/api/policies/${id}?tenantId=${tenantId}`);
-    setDetail(d); setRevision(d.policy.content);
+    setDetail(d); setRevision(d.policy.content); setAttesting(false);
   });
   const post = (path: string, body: object) => attempt(setErr, async () => {
     await api(path, { method: "POST", body: JSON.stringify({ tenantId, ...body }) });
@@ -52,6 +56,8 @@ export default function PoliciesPage() {
     <Page title={L("Policies & Procedures", "السياسات والإجراءات")} code="UX-GOV-004" tenantId={tenantId} setTenantId={setTenantId} error={err}
       actions={<button className="btn" onClick={load}>{L("Load", "تحميل")}</button>}>
       <div className="card-grid">
+        <MyAttestations tenantId={tenantId} setErr={setErr} refreshKey={refresh}
+          onOpen={(id) => attempt(setErr, async () => { const d = await api<Detail>(`/api/policies/${id}?tenantId=${tenantId}`); setDetail(d); setRevision(d.policy.content); setAttesting(true); })} />
         <Card title={L("Policies", "السياسات")}>
           <Table rows={policies} empty={L("No policies.", "لا سياسات.")} onRowClick={(p) => open(p.id)} columns={[
             { label: L("Code", "الرمز"), render: (p) => p.code },
@@ -76,10 +82,16 @@ export default function PoliciesPage() {
               {(FLOW[detail.policy.status] ?? []).map((s) => (
                 <button key={s} className="btn btn-secondary" onClick={() => post(`/api/policies/${detail.policy.id}/transition`, { status: s })}>→ {s}</button>))}
               {detail.policy.status === "Published" &&
-                <button className="btn" onClick={() => post(`/api/policies/${detail.policy.id}/acknowledge`, {})}>{L("I acknowledge", "أقرّ بالاطلاع")}</button>}
+                <button className="btn" onClick={() => setAttesting(true)}>{L("Read & acknowledge", "اقرأ وأقرّ")}</button>}
               {detail.policy.status !== "Retired" &&
                 <button className="btn btn-secondary" onClick={() => post(`/api/policies/${detail.policy.id}/retire`, {})}>{L("Retire", "إيقاف")}</button>}
             </div>
+            {attesting && detail.policy.status === "Published" && (
+              <AttestPanel tenantId={tenantId} policyId={detail.policy.id} content={detail.policy.content} setErr={setErr}
+                onDone={() => attempt(setErr, async () => {
+                  setRefresh((n) => n + 1);
+                  setDetail(await api<Detail>(`/api/policies/${detail.policy.id}?tenantId=${tenantId}`));
+                })} />)}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem" }}>
               <div>
                 <Field label={L("Revise text (creates a new version)", "تعديل النص (ينشئ نسخة جديدة)")}>
@@ -101,6 +113,7 @@ export default function PoliciesPage() {
                   { label: L("Note", "الملاحظة"), render: (v) => v.changeNote ?? "–" },
                   { label: L("Saved", "الحفظ"), render: (v) => fmtDate(v.createdAt) },
                 ]} />
+                <AttestationSettings key={detail.policy.id} tenantId={tenantId} policyId={detail.policy.id} setErr={setErr} />
                 <h4>{L("Procedures", "الإجراءات")}</h4>
                 <Table rows={detail.procedures} empty={L("No procedures.", "لا إجراءات.")} columns={[
                   { label: L("Code", "الرمز"), render: (p) => p.code },

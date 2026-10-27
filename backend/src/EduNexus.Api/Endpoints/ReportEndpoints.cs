@@ -181,9 +181,12 @@ public static class ReportEndpoints
     {
         var actions = await db.DecisionActions.Where(a => a.TenantId == tenantId).Select(a => new { a.Status, a.DueAt }).ToListAsync(ct);
         var completed = actions.Count(a => a.Status is DecisionActionStatus.Done or DecisionActionStatus.Verified);
-        var publishedPolicies = await db.Policies.Where(p => p.TenantId == tenantId && p.Status == PolicyStatus.Published).Select(p => p.Id).ToListAsync(ct);
+        var published = await db.Policies.Where(p => p.TenantId == tenantId && p.Status == PolicyStatus.Published).ToListAsync(ct);
+        var publishedPolicies = published.Select(p => p.Id).ToList();
         var activePeople = await db.People.CountAsync(p => p.TenantId == tenantId && p.IsActive, ct);
-        var acks = await db.PolicyAcknowledgements.CountAsync(a => a.TenantId == tenantId && publishedPolicies.Contains(a.PolicyId), ct);
+        // Only current attestations count: the latest version, within the re-attestation cycle.
+        var allAcks = await db.PolicyAcknowledgements.Where(a => a.TenantId == tenantId && publishedPolicies.Contains(a.PolicyId)).ToListAsync(ct);
+        var acks = published.Sum(p => PolicyAttestationEndpoints.CurrentAttesters(allAcks, p, now).Count);
         var expectedAcks = publishedPolicies.Count * activePeople;
         return new
         {
@@ -297,8 +300,9 @@ public static class ReportEndpoints
     private static async Task<List<Dictionary<string, object?>>> PoliciesAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
     {
         var policies = await db.Policies.Where(p => p.TenantId == tenantId).OrderBy(p => p.Code).ToListAsync(ct);
-        var acks = await db.PolicyAcknowledgements.Where(a => a.TenantId == tenantId).GroupBy(a => a.PolicyId)
-            .Select(g => new { g.Key, n = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.n, ct);
+        var allAcks = await db.PolicyAcknowledgements.Where(a => a.TenantId == tenantId).ToListAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        var acks = policies.ToDictionary(p => p.Id, p => PolicyAttestationEndpoints.CurrentAttesters(allAcks, p, now).Count);
         var activePeople = await db.People.CountAsync(p => p.TenantId == tenantId && p.IsActive, ct);
         return policies.Select(p => new Dictionary<string, object?>
         {
