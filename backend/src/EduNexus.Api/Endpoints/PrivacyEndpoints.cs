@@ -16,6 +16,9 @@ using static EduNexus.Api.Endpoints.EndpointHelpers;
 
 namespace EduNexus.Api.Endpoints;
 
+public sealed record ProposeErasureReq(Guid TenantId, Guid PersonId, string Reason);
+public sealed record DecideErasureReq(Guid TenantId, string? Note);
+
 /// <summary>
 /// PDPL support: the data subject's right of access and to a copy (G1), and the public privacy notice (G3).
 /// </summary>
@@ -104,6 +107,90 @@ public static class PrivacyEndpoints
             return Results.File(JsonSerializer.SerializeToUtf8Bytes(export, Json), "application/json; charset=utf-8", $"personal-data-{id:N}.json");
         }).RequireAuthorization().WithTags("Privacy");
 
+        // --- Right to destruction (G2): erase a person's identity, keep institutional records ---
+        var erasure = app.MapGroup("/api/privacy/erasure-requests").WithTags("Privacy").RequireAuthorization();
+
+        erasure.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("privacy:manage")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+            await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            return Results.Ok(await db.ErasureRequests.Where(r => r.TenantId == tenantId).OrderByDescending(r => r.ProposedAt).ToListAsync(ct));
+        });
+
+        erasure.MapPost("/", async (AppDbContext db, HttpContext ctx, ProposeErasureReq req, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("privacy:manage")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+            if (string.IsNullOrWhiteSpace(req.Reason)) return Results.BadRequest(new { error = "A reason (e.g. the data subject's request reference) is required." });
+            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+            if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.PersonId, ct)) return Results.NotFound(new { error = "Person not found." });
+            if (await db.ErasureRequests.AnyAsync(r => r.TenantId == req.TenantId && r.PersonId == req.PersonId
+                    && (r.Status == ErasureStatus.Proposed || r.Status == ErasureStatus.Approved || r.Status == ErasureStatus.Executed), ct))
+                return Results.Conflict(new { error = "An erasure for this person is already open or done." });
+            if (await HeldRecordsAsync(db, req.TenantId, req.PersonId, ct) is > 0 and var held)
+                return Results.Conflict(new { error = $"{held} record(s) involving this person are under a legal hold; release the hold(s) first." });
+            var r = new ErasureRequest(Guid.NewGuid(), req.TenantId, req.PersonId, Erasure.PseudonymFor(req.PersonId), req.Reason.Trim(),
+                ErasureStatus.Proposed, Actor(ctx), DateTimeOffset.UtcNow, null, null, null, null, null);
+            db.ErasureRequests.Add(r);
+            DomainEvents.Record(db, req.TenantId, "ErasureProposed", "ErasureProposed", nameof(Person), req.PersonId.ToString(),
+                payload: new { tenantId = req.TenantId, requestId = r.Id }, details: r.Reason);
+            await db.SaveChangesAsync(ct);
+            await scope.CommitAsync(ct);
+            return Results.Created($"/api/privacy/erasure-requests/{r.Id}", r);
+        });
+
+        erasure.MapPost("/{id:guid}/approve", (AppDbContext db, HttpContext ctx, Guid id, DecideErasureReq req, CancellationToken ct) =>
+            DecideErasureAsync(db, ctx, id, req, approve: true, ct));
+        erasure.MapPost("/{id:guid}/reject", (AppDbContext db, HttpContext ctx, Guid id, DecideErasureReq req, CancellationToken ct) =>
+            DecideErasureAsync(db, ctx, id, req, approve: false, ct));
+
+        erasure.MapPost("/{id:guid}/execute", async (AppDbContext db, HttpContext ctx, Guid id, DecideErasureReq req, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("privacy:manage")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+            var r = await db.ErasureRequests.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+            if (r is null) return Results.NotFound(new { error = "Erasure request not found." });
+            if (r.Status != ErasureStatus.Approved) return Results.Conflict(new { error = $"Only approved requests can be executed (status is {r.Status})." });
+            // A hold placed after approval still wins.
+            if (await HeldRecordsAsync(db, req.TenantId, r.PersonId, ct) is > 0 and var held)
+                return Results.Conflict(new { error = $"{held} record(s) involving this person went under a legal hold after approval; release it first." });
+
+            var t = req.TenantId; var pid = r.PersonId; var now = DateTimeOffset.UtcNow;
+            var person = await db.People.FirstAsync(p => p.TenantId == t && p.Id == pid, ct);
+            db.Entry(person).CurrentValues.SetValues(Erasure.Pseudonymise(person));
+
+            // Personal, non-institutional data: deleted.
+            var roles = await db.RoleAssignments.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            var delegations = await db.AuthorityDelegations.Where(x => x.TenantId == t && (x.FromPersonId == pid || x.ToPersonId == pid)).ToListAsync(ct);
+            var prefs = await db.NotificationPreferences.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            var notes = await db.Notifications.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            var follows = await db.EntityFollowers.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            var shares = await db.DocumentShares.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            db.RemoveRange(roles); db.RemoveRange(delegations); db.RemoveRange(prefs); db.RemoveRange(notes); db.RemoveRange(follows); db.RemoveRange(shares);
+
+            // Institutional records kept, identity replaced.
+            var correspondents = await db.Correspondents.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            foreach (var c in correspondents) db.Entry(c).CurrentValues.SetValues(c with { DisplayName = r.Pseudonym });
+            var ai = await db.AiInteractions.Where(x => x.TenantId == t && x.RequestedBy == pid).ToListAsync(ct);
+            foreach (var a in ai) db.Entry(a).CurrentValues.SetValues(a with { InputExcerpt = "[erased]", OutputExcerpt = "[erased]" });
+            var memberships = await db.CommitteeMembers.Where(x => x.TenantId == t && x.PersonId == pid && x.TermEndsAt == null).ToListAsync(ct);
+            foreach (var m in memberships) db.Entry(m).CurrentValues.SetValues(m with { TermEndsAt = now });
+
+            var summary = $"Directory record pseudonymised as '{r.Pseudonym}'. Deleted: {roles.Count} role assignment(s), {delegations.Count} delegation(s), "
+                + $"{prefs.Count} notification preference(s), {notes.Count} notification(s), {follows.Count} follow(s), {shares.Count} document share(s). "
+                + $"Renamed in {correspondents.Count} correspondence participant row(s); {ai.Count} AI interaction(s) redacted; {memberships.Count} committee term(s) ended. "
+                + "Votes, approvals, minutes and the audit trail are kept and now refer to the pseudonym. Remove or disable the account in the identity provider.";
+            var executed = r with { Status = ErasureStatus.Executed, ExecutedAt = now, Summary = summary };
+            db.Entry(r).CurrentValues.SetValues(executed);
+            DomainEvents.Record(db, t, "PersonErased", "PersonErased", nameof(Person), pid.ToString(),
+                payload: new { tenantId = t, requestId = r.Id }, details: r.Pseudonym);
+            await db.SaveChangesAsync(ct);
+            await scope.CommitAsync(ct);
+            return Results.Ok(executed);
+        });
+
         // The institution's published privacy notice, readable before sign-in (tenant by slug or id).
         app.MapGet("/api/public/privacy-notice", async (AppDbContext db, string tenant, CancellationToken ct) =>
         {
@@ -118,5 +205,38 @@ public static class PrivacyEndpoints
             if (notice is null) return Results.NotFound(new { error = "This institution has not published a privacy notice yet." });
             return Results.Ok(new { institution = t.Name, notice.Title, notice.Content, notice.Version });
         }).AllowAnonymous().WithTags("Privacy");
+    }
+
+    private static string Actor(HttpContext ctx) =>
+        ctx.User.FindFirst("sub")?.Value ?? ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "unknown";
+
+    /// <summary>Active legal holds on correspondence the person wrote or took part in.</summary>
+    private static async Task<int> HeldRecordsAsync(AppDbContext db, Guid tenantId, Guid personId, CancellationToken ct)
+    {
+        var authored = db.Correspondences.Where(c => c.TenantId == tenantId && c.AuthorId == personId).Select(c => c.Id);
+        var participated = db.Correspondents.Where(c => c.TenantId == tenantId && c.PersonId == personId).Select(c => c.CorrespondenceId);
+        return await db.RecordHolds.CountAsync(h => h.TenantId == tenantId && h.ReleasedAt == null && h.EntityType == "Correspondence"
+            && (authored.Contains(h.EntityId) || participated.Contains(h.EntityId)), ct);
+    }
+
+    private static async Task<IResult> DecideErasureAsync(AppDbContext db, HttpContext ctx, Guid id, DecideErasureReq req, bool approve, CancellationToken ct)
+    {
+        if (!ctx.User.HasPermission("privacy:manage")) return Results.Forbid();
+        if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+        if (!approve && string.IsNullOrWhiteSpace(req.Note)) return Results.BadRequest(new { error = "A reason is required to reject an erasure." });
+        await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+        var r = await db.ErasureRequests.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
+        if (r is null) return Results.NotFound(new { error = "Erasure request not found." });
+        if (r.Status != ErasureStatus.Proposed) return Results.Conflict(new { error = $"Only proposed requests can be decided (status is {r.Status})." });
+        var actor = Actor(ctx);
+        if (string.Equals(actor, r.ProposedBy, StringComparison.Ordinal))
+            return Results.Json(new { error = "Segregation of duties: the proposer cannot decide their own erasure request." }, statusCode: StatusCodes.Status403Forbidden);
+        var decided = r with { Status = approve ? ErasureStatus.Approved : ErasureStatus.Rejected, DecidedBy = actor, DecidedAt = DateTimeOffset.UtcNow, DecisionNote = req.Note?.Trim() };
+        db.Entry(r).CurrentValues.SetValues(decided);
+        var evt = approve ? "ErasureApproved" : "ErasureRejected";
+        DomainEvents.Record(db, req.TenantId, evt, evt, nameof(Person), r.PersonId.ToString(), payload: new { tenantId = req.TenantId, requestId = r.Id }, details: req.Note);
+        await db.SaveChangesAsync(ct);
+        await scope.CommitAsync(ct);
+        return Results.Ok(decided);
     }
 }

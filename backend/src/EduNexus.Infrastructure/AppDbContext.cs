@@ -77,6 +77,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RecordHold> RecordHolds => Set<RecordHold>();
     public DbSet<DisposalBatch> DisposalBatches => Set<DisposalBatch>();
     public DbSet<DisposalItem> DisposalItems => Set<DisposalItem>();
+    public DbSet<ErasureRequest> ErasureRequests => Set<ErasureRequest>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -552,6 +553,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(x => x.ProposedBy).HasMaxLength(200).IsRequired();
             e.Property(x => x.DecidedBy).HasMaxLength(200);
             e.Property(x => x.DecisionNote).HasMaxLength(1000);
+        });
+        b.Entity<ErasureRequest>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.PersonId });
+            e.Property(x => x.Pseudonym).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ProposedBy).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DecidedBy).HasMaxLength(200);
+            e.Property(x => x.DecisionNote).HasMaxLength(1000);
+            e.Property(x => x.Summary).HasMaxLength(2000);
         });
         b.Entity<DisposalItem>(e =>
         {

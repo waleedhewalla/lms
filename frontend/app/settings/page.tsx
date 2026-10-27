@@ -8,6 +8,7 @@ import { Card, Field, Page, Table, attempt, useL, useTenant } from "../../compon
 type Me = { subject: string; tenantId: string | null; permissions: string[]; person: { id: string; fullName: string } | null };
 type Pref = { channel: string; enabled: boolean; minPriority: string; quietFromHour: number | null; quietToHour: number | null };
 type Sla = { id: string; entityType: string; responseHours: number; escalateAfterHours: number; isActive: boolean };
+type Erasure = { id: string; personId: string; pseudonym: string; reason: string; status: string; proposedBy: string; decidedBy: string | null; summary: string | null };
 const PRIORITIES = ["FYI", "Normal", "Important", "Urgent", "Emergency"];
 
 export default function SettingsPage() {
@@ -35,9 +36,26 @@ export default function SettingsPage() {
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a"); a.href = url; a.download = `personal-data-${personId.slice(0, 8)}.json`; a.click(); URL.revokeObjectURL(url);
   });
+  const [erasures, setErasures] = useState<Erasure[]>([]);
+  const [erasePerson, setErasePerson] = useState("");
+  const [eraseReason, setEraseReason] = useState("");
+  const [eraseNote, setEraseNote] = useState("");
+  const loadErasures = async () => setErasures(await api<Erasure[]>(`/api/privacy/erasure-requests?tenantId=${tenantId}`));
+  const proposeErasure = () => attempt(setErr, async () => {
+    await api("/api/privacy/erasure-requests", { method: "POST", body: JSON.stringify({ tenantId, personId: erasePerson.trim(), reason: eraseReason }) });
+    setErasePerson(""); setEraseReason("");
+    await loadErasures();
+  });
+  const actErasure = (id: string, action: "approve" | "reject" | "execute") => attempt(setErr, async () => {
+    await api(`/api/privacy/erasure-requests/${id}/${action}`, { method: "POST", body: JSON.stringify({ tenantId, note: eraseNote || null }) });
+    setEraseNote("");
+    await loadErasures();
+  });
   const load = () => attempt(setErr, async () => {
     setOk("");
-    setMe(await api<Me>("/api/auth/me"));
+    const who = await api<Me>("/api/auth/me");
+    setMe(who);
+    if (who.permissions.includes("privacy:manage")) await loadErasures();
     setPrefs(await api<Pref[]>(`/api/notifications/preferences?tenantId=${tenantId}`));
     setSlas(await api<Sla[]>(`/api/sla/policies?tenantId=${tenantId}`));
   });
@@ -85,6 +103,34 @@ export default function SettingsPage() {
               <button className="btn btn-secondary" disabled={!subjectId} onClick={() => exportData(subjectId.trim())}>{L("Export", "تصدير")}</button>
             </div>)}
         </Card>
+        {me?.permissions.includes("privacy:manage") && (
+        <Card title={L("Erasure requests", "طلبات الإتلاف")}>
+          <p style={{ marginTop: 0, fontSize: "0.85rem", opacity: 0.8 }}>
+            {L("PDPL right to destruction: the person's identity is replaced by a pseudonym and personal data is deleted; votes, minutes and the audit trail are kept. A second privacy officer must approve. Legal holds block erasure.",
+               "حق الإتلاف وفق نظام حماية البيانات الشخصية: يُستبدل اسم الشخص باسم مستعار وتُحذف بياناته الشخصية، مع الاحتفاظ بالتصويتات والمحاضر وسجل التدقيق. يجب أن يعتمد الطلب مسؤول خصوصية آخر، ويمنع الحجز القانوني الإتلاف.")}</p>
+          <Table rows={erasures} empty={L("No erasure requests.", "لا توجد طلبات إتلاف.")} columns={[
+            { label: L("Person", "الشخص"), render: (r) => r.pseudonym },
+            { label: L("Reason", "السبب"), render: (r) => r.reason },
+            { label: L("Status", "الحالة"), render: (r) => <span className="badge" title={r.summary ?? undefined}>{r.status}</span> },
+            { label: L("Actions", "الإجراءات"), render: (r) => (
+              <div style={{ display: "flex", gap: "0.25rem", flexWrap: "wrap" }}>
+                {r.status === "Proposed" && (<>
+                  <button className="btn btn-secondary" disabled={r.proposedBy === me.subject} onClick={() => actErasure(r.id, "approve")}>{L("Approve", "اعتماد")}</button>
+                  <button className="btn btn-secondary" disabled={r.proposedBy === me.subject || !eraseNote} onClick={() => actErasure(r.id, "reject")}>{L("Reject", "رفض")}</button>
+                </>)}
+                {r.status === "Approved" && <button className="btn" onClick={() => actErasure(r.id, "execute")}>{L("Execute", "تنفيذ")}</button>}
+              </div>) },
+          ]} />
+          <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.75rem" }}>
+            <Field label={L("Decision note (required to reject)", "ملاحظة القرار (مطلوبة للرفض)")}>
+              <input className="input" value={eraseNote} onChange={(e) => setEraseNote(e.target.value)} /></Field>
+            <Field label={L("Person ID to erase", "معرّف الشخص المراد إتلاف بياناته")}>
+              <input className="input" value={erasePerson} onChange={(e) => setErasePerson(e.target.value)} /></Field>
+            <Field label={L("Reason / request reference", "السبب / رقم الطلب")}>
+              <input className="input" value={eraseReason} onChange={(e) => setEraseReason(e.target.value)} /></Field>
+            <button className="btn btn-secondary" disabled={!erasePerson || !eraseReason} onClick={proposeErasure}>{L("Propose erasure", "اقتراح الإتلاف")}</button>
+          </div>
+        </Card>)}
         <Card title={L("My account", "حسابي")}>
           {!me ? <p style={{ opacity: 0.7 }}>{L("Load to see your account.", "حمّل لعرض حسابك.")}</p> : (<>
             <p style={{ marginTop: 0 }}>{L("Person", "الشخص")}: <strong>{me.person?.fullName ?? L("not linked", "غير مرتبط")}</strong></p>
