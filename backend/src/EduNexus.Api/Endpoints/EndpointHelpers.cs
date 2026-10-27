@@ -49,6 +49,10 @@ public static class EndpointHelpers
         return matches.Count == 1 ? matches[0] : null;
     }
 
+    /// <summary>The caller's subject (token "sub"), used to record who did something and for segregation of duties.</summary>
+    public static string SubjectOf(HttpContext ctx) =>
+        ctx.User.FindFirst("sub")?.Value ?? ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "unknown";
+
     public static bool IsUniqueConflict(DbUpdateException ex)
     {
         return ex.InnerException is PostgresException p && p.SqlState == PostgresErrorCodes.UniqueViolation;

@@ -1423,8 +1423,16 @@ namespace EduNexus.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<double?>("Baseline")
+                        .HasColumnType("double precision");
+
                     b.Property<double>("Current")
                         .HasColumnType("double precision");
+
+                    b.Property<bool>("LowerIsBetter")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1448,6 +1456,45 @@ namespace EduNexus.Infrastructure.Migrations
                     b.HasIndex("TenantId", "ObjectiveId");
 
                     b.ToTable("Kpis");
+                });
+
+            modelBuilder.Entity("EduNexus.Foundation.KpiReading", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("KpiId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Period")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecordedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("Value")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "KpiId", "RecordedAt");
+
+                    b.ToTable("KpiReadings");
                 });
 
             modelBuilder.Entity("EduNexus.Foundation.Meeting", b =>
@@ -2386,6 +2433,13 @@ namespace EduNexus.Infrastructure.Migrations
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("Framework")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasDefaultValue("Custom");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");

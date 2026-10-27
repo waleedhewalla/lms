@@ -43,6 +43,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<StrategicPlan> StrategicPlans => Set<StrategicPlan>();
     public DbSet<Objective> Objectives => Set<Objective>();
     public DbSet<Kpi> Kpis => Set<Kpi>();
+    public DbSet<KpiReading> KpiReadings => Set<KpiReading>();
     public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
     public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
     public DbSet<IntegrationDelivery> IntegrationDeliveries => Set<IntegrationDelivery>();
@@ -300,6 +301,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            e.Property(x => x.Framework).HasMaxLength(40).HasDefaultValue("Custom");
         });
         b.Entity<Criterion>(e =>
         {
@@ -337,6 +339,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.ObjectiveId });
+            e.Property(x => x.LowerIsBetter).HasDefaultValue(false);
+        });
+        b.Entity<KpiReading>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.KpiId, x.RecordedAt });
+            e.Property(x => x.Period).HasMaxLength(40).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.Property(x => x.RecordedBy).HasMaxLength(200).IsRequired();
         });
         b.Entity<AiInteraction>(e =>
         {

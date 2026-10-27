@@ -32,6 +32,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <Link href="/policies" className="nav-link">📘 {L("Policies", "السياسات")}</Link>
           <Link href="/calendar" className="nav-link">🗓️ {L("Calendar", "التقويم")}</Link>
           <Link href="/reports" className="nav-link">📈 {L("Reports", "التقارير")}</Link>
+          <Link href="/accreditation" className="nav-link">🎓 {L("Accreditation", "الاعتماد")}</Link>
+          <Link href="/strategy" className="nav-link">🎯 {L("Strategy", "الاستراتيجية")}</Link>
           <Link href="/records" className="nav-link">🗄️ {L("Records Retention", "حفظ السجلات")}</Link>
           <Link href="/settings" className="nav-link">⚙️ {L("Settings", "الإعدادات")}</Link>
         </nav>

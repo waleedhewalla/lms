@@ -38,7 +38,7 @@ public static class IntelligenceEndpoints
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest(new { error = "Code and Title required." });
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            var st = new Standard(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Title.Trim());
+            var st = new Standard(Guid.NewGuid(), req.TenantId, req.Code.Trim(), req.Title.Trim(), string.IsNullOrWhiteSpace(req.Framework) ? "Custom" : req.Framework.Trim());
             db.Standards.Add(st);
             DomainEvents.Record(db, req.TenantId, "StandardCreated", "StandardCreated",
                 nameof(Standard), st.Id.ToString(), details: st.Code);
@@ -152,7 +152,7 @@ public static class IntelligenceEndpoints
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.Objectives.AnyAsync(o => o.TenantId == req.TenantId && o.Id == req.ObjectiveId, ct))
                 return Results.NotFound(new { error = "Objective not found." });
-            var kpi = new Kpi(Guid.NewGuid(), req.TenantId, req.ObjectiveId, req.Name.Trim(), req.Target, req.Current, req.Unit ?? "%");
+            var kpi = new Kpi(Guid.NewGuid(), req.TenantId, req.ObjectiveId, req.Name.Trim(), req.Target, req.Current, req.Unit ?? "%", req.Baseline, req.LowerIsBetter);
             db.Kpis.Add(kpi);
             DomainEvents.Record(db, req.TenantId, "KpiCreated", "KpiCreated",
                 nameof(Kpi), kpi.Id.ToString(), details: kpi.Name);
@@ -168,8 +168,11 @@ public static class IntelligenceEndpoints
             var kpi = await db.Kpis.FirstOrDefaultAsync(k => k.TenantId == req.TenantId && k.Id == id, ct);
             if (kpi is null) return Results.NotFound(new { error = "KPI not found." });
             db.Entry(kpi).CurrentValues.SetValues(kpi with { Current = req.Current });
+            var period = string.IsNullOrWhiteSpace(req.Period) ? DateTimeOffset.UtcNow.ToString("yyyy-MM") : req.Period.Trim();
+            db.KpiReadings.Add(new KpiReading(Guid.NewGuid(), req.TenantId, id, req.Current, period[..Math.Min(period.Length, 40)],
+                string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(), SubjectOf(ctx), DateTimeOffset.UtcNow));
             DomainEvents.Record(db, req.TenantId, "KpiUpdated", "KpiUpdated",
-                nameof(Kpi), id.ToString(), details: $"current={req.Current}");
+                nameof(Kpi), id.ToString(), details: $"current={req.Current} period={period}");
             await db.SaveChangesAsync(ct);
             await scope.CommitAsync(ct);
             return Results.Ok(kpi with { Current = req.Current });
