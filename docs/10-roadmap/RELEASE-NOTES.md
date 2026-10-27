@@ -70,6 +70,7 @@ Feature-complete release of the delivery plan (Waves A–G).
 ## Privacy (PDPL): access and transparency
 - **Download my data** in Settings exports everything EduNexus holds about the signed-in person as JSON: the person record plus 30 related record types. Privacy officers (`privacy:manage`, a new Keycloak group) can export for any person. Every export is audited.
 - **Privacy notice:** publish a policy with code `PRIVACY` and it appears without sign-in at `/privacy?tenant=<slug>`, linked from every page.
+- **Erasure (right to destruction):** a privacy officer proposes erasing a person in Settings, and a second officer approves. Executing it replaces the name with a pseudonym ("Former member XXXXXXXX"), clears the email and rank, deactivates the person, and deletes their role assignments, delegations, notifications, preferences, follows and document shares. Votes, approvals, minutes and the audit trail are kept under the pseudonym. Erasure is refused while correspondence involving the person is under a legal hold. Migration R17 adds one tenant table under row-level security.
 
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.

@@ -2310,5 +2310,78 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, (await anon.GetAsync($"/api/public/privacy-notice?tenant={tenant}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync("/api/public/privacy-notice?tenant=no-such-place")).StatusCode);
     }
+    [Fact]
+    public async Task Pdpl_Erasure_Pseudonymises_Person_With_Segregation_Of_Duties_And_Hold_Check()
+    {
+        var tenant = Guid.NewGuid();
+        var tokens = factory.Services.GetRequiredService<DevTokenService>();
+        HttpClient As(string subject, Guid t, params string[] perms)
+        {
+            var c = factory.CreateClient();
+            Auth(c, tokens.Mint(subject, t, perms));
+            return c;
+        }
+        var proposer = As("privacy-officer", tenant, "privacy:manage");
+        var approver = As("privacy-approver", tenant, "privacy:manage");
+
+        // Seed a person with personal and institutional data (test DB role bypasses RLS).
+        var person = new Person(Guid.NewGuid(), tenant, PersonType.Employee, "Layla Haddad", "layla@example.test", true, DateTimeOffset.UtcNow, AcademicRank: "Professor");
+        var held = new Person(Guid.NewGuid(), tenant, PersonType.Employee, "Sami Khoury", "sami@example.test", true, DateTimeOffset.UtcNow);
+        var role = new Role(Guid.NewGuid(), tenant, $"R{Guid.NewGuid():N}"[..12], "Dean", ["task:read"]);
+        var letter = new Correspondence(Guid.NewGuid(), tenant, $"ER-{Guid.NewGuid():N}"[..12], CorrespondenceType.Outgoing, "Subject", "Body", person.Id,
+            CorrespondencePriority.Normal, false, CorrespondenceStatus.Approved, DateTimeOffset.UtcNow);
+        var heldLetter = letter with { Id = Guid.NewGuid(), Number = $"ER-{Guid.NewGuid():N}"[..12], AuthorId = held.Id };
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.People.AddRange(person, held);
+            db.Roles.Add(role);
+            db.RoleAssignments.Add(new RoleAssignment(Guid.NewGuid(), tenant, person.Id, role.Id, "tenant", null, DateTimeOffset.UtcNow));
+            db.Correspondences.AddRange(letter, heldLetter);
+            db.Correspondents.Add(new Correspondent(Guid.NewGuid(), tenant, letter.Id, person.Id, "Layla Haddad", false));
+            db.RecordHolds.Add(new RecordHold(Guid.NewGuid(), tenant, "Correspondence", heldLetter.Id, "Litigation", "legal", DateTimeOffset.UtcNow, null, null));
+            await db.SaveChangesAsync();
+        }
+
+        // Validation, unknown person, and legal hold block.
+        Assert.Equal(HttpStatusCode.Forbidden, (await As("nobody", tenant, "person:read").PostAsJsonAsync("/api/privacy/erasure-requests", new { tenantId = tenant, personId = person.Id, reason = "DSR-1" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await proposer.PostAsJsonAsync("/api/privacy/erasure-requests", new { tenantId = tenant, personId = person.Id, reason = " " })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await proposer.PostAsJsonAsync("/api/privacy/erasure-requests", new { tenantId = tenant, personId = Guid.NewGuid(), reason = "DSR-1" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await proposer.PostAsJsonAsync("/api/privacy/erasure-requests", new { tenantId = tenant, personId = held.Id, reason = "DSR-2" })).StatusCode);
+
+        // Propose; a duplicate is refused; the proposer cannot approve; rejection needs a note.
+        var created = await proposer.PostAsJsonAsync("/api/privacy/erasure-requests", new { tenantId = tenant, personId = person.Id, reason = "DSR-1" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var req = IdOf(await created.Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.Conflict, (await proposer.PostAsJsonAsync("/api/privacy/erasure-requests", new { tenantId = tenant, personId = person.Id, reason = "DSR-1" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await proposer.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/approve", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await approver.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/reject", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await approver.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/execute", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await As("outsider", Guid.NewGuid(), "privacy:manage").PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/approve", new { tenantId = tenant })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await approver.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/approve", new { tenantId = tenant, note = "Verified identity" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await approver.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/approve", new { tenantId = tenant })).StatusCode);
+
+        // Execute: identity replaced, personal data deleted, institutional records kept.
+        var exec = await proposer.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/execute", new { tenantId = tenant });
+        Assert.Equal(HttpStatusCode.OK, exec.StatusCode);
+        var done = await exec.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Executed", done.GetProperty("status").GetString());
+        Assert.Contains("1 role assignment", done.GetProperty("summary").GetString());
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var p = await db.People.AsNoTracking().SingleAsync(x => x.Id == person.Id);
+            Assert.Equal(Erasure.PseudonymFor(person.Id), p.FullName);
+            Assert.Null(p.Email);
+            Assert.False(p.IsActive);
+            Assert.False(await db.RoleAssignments.AnyAsync(x => x.PersonId == person.Id));
+            Assert.True(await db.Correspondences.AnyAsync(x => x.Id == letter.Id));
+            Assert.Equal(p.FullName, (await db.Correspondents.AsNoTracking().SingleAsync(x => x.CorrespondenceId == letter.Id)).DisplayName);
+            Assert.Equal(1, await db.AuditEvents.CountAsync(a => a.TenantId == tenant && a.Action == "PersonErased" && a.EntityId == person.Id.ToString()));
+        }
+        Assert.Equal(HttpStatusCode.Conflict, (await proposer.PostAsJsonAsync($"/api/privacy/erasure-requests/{req}/execute", new { tenantId = tenant })).StatusCode);
+        var list = await (await approver.GetAsync($"/api/privacy/erasure-requests?tenantId={tenant}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, list.GetArrayLength());
+    }
 }
 

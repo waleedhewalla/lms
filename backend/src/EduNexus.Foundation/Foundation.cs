@@ -492,3 +492,28 @@ public static class RetentionRules
         return null;
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// PDPL right to destruction (G2): erase a person's directory identity while keeping institutional records.
+// ---------------------------------------------------------------------------------------------------------
+
+public enum ErasureStatus { Proposed, Approved, Rejected, Executed }
+
+/// <summary>
+/// A request to erase/pseudonymise one person. Proposed and approved by different privacy officers.
+/// Kept forever as the erasure register; it stores the pseudonym, never the erased name.
+/// </summary>
+public sealed record ErasureRequest(
+    Guid Id, Guid TenantId, Guid PersonId, string Pseudonym, string Reason, ErasureStatus Status,
+    string ProposedBy, DateTimeOffset ProposedAt, string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote,
+    DateTimeOffset? ExecutedAt, string? Summary);
+
+public static class Erasure
+{
+    /// <summary>Stable, non-identifying label that replaces the person's name everywhere.</summary>
+    public static string PseudonymFor(Guid personId) => $"Former member {personId.ToString("N")[..8].ToUpperInvariant()}";
+
+    /// <summary>The directory record after erasure: no name, no email, no rank, deactivated.</summary>
+    public static Person Pseudonymise(Person p) =>
+        p with { FullName = PseudonymFor(p.Id), Email = null, AcademicRank = null, IsActive = false };
+}

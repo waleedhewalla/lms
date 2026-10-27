@@ -136,7 +136,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | Data minimisation | 🟡 | People records hold only directory fields (name, type, email, organisation). Avoid putting special-category data in free-text fields; policy and training are the institution's job. |
 | Accuracy, right to correction | ✅ | People records are editable (`PATCH /api/people/{id}`, `person:update`), and changes are audited. |
 | Right of access / to obtain a copy | ✅ | Settings → **My data → Download my data** (self-service), or a privacy officer exports any person (`GET /api/people/{id}/personal-data`, `privacy:manage`). The JSON file covers the person and 30 related record types; correspondence is exported as metadata only because its content is institutional. Every export is audited (`PersonalDataExported`). |
-| Right to destruction | 🟡 / ❌ G2 | Records retention and disposal covers correspondence and documents, with two-person approval, legal holds and confirmed deletion. Erasing or pseudonymising a *person* across all modules, while keeping legally required records, is **Gap G2**. |
+| Right to destruction | ✅ | Records retention and disposal covers correspondence and documents. Person erasure (`/api/privacy/erasure-requests`) pseudonymises the directory record, deletes role assignments, delegations, notifications, follows and shares, renames correspondence participants, and redacts AI excerpts. A second privacy officer must approve, and legal holds block it. Votes, minutes and the audit trail are kept under the pseudonym. The identity-provider account is removed separately. |
 | Respond to requests within 30 days (extendable by 30) | 🔧 | Institution's process. Use EduNexus requests and tasks with an SLA policy to track data-subject requests. |
 | Retention limits | ✅ | Retention schedules with legal references; disposal register (`/records`). |
 | Security of processing | ✅ / 🟡 | All of §2 above. |
@@ -162,7 +162,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | ID | Gap | Proposed fix | Priority |
 |---|---|---|---|
 | G1 | ~~No one-click personal-data export~~ | **Done:** self-service and privacy-officer export, audited | ✅ |
-| G2 | No person-level erasure or pseudonymisation | A "forget person" workflow under two-person approval. It pseudonymises the directory record and free-text mentions, keeps records required by retention schedules and legal holds, and logs to the disposal register. | High |
+| G2 | ~~No person-level erasure or pseudonymisation~~ | **Done:** erasure requests with two-person approval, a legal-hold check and pseudonymisation; institutional records are kept | ✅ |
 | G3 | ~~No privacy notice in the web app~~ | **Done:** published `PRIVACY` policy shown publicly at `/privacy` | ✅ |
 | G4 | No enforced TLS inside the cluster | A Helm option for TLS or a service mesh (mTLS) between API, database, broker, storage and search; document Postgres `sslmode=require` | Medium |
 | G5 | Rate limits are per instance | A shared rate-limit store (Redis is already in the stack) when running more than one API replica | Low |
