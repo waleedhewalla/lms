@@ -2088,6 +2088,9 @@ namespace EduNexus.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("AttestEveryMonths")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("text");
@@ -2101,6 +2104,11 @@ namespace EduNexus.Infrastructure.Migrations
 
                     b.Property<Guid?>("OwnerId")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("QuizPassPercent")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(80);
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -2140,15 +2148,57 @@ namespace EduNexus.Infrastructure.Migrations
                     b.Property<Guid>("PolicyId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("PolicyVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<int?>("QuizScore")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "PolicyId", "PersonId")
-                        .IsUnique();
+                    b.HasIndex("TenantId", "PolicyId", "PersonId", "PolicyVersion");
 
                     b.ToTable("PolicyAcknowledgements");
+                });
+
+            modelBuilder.Entity("EduNexus.Foundation.PolicyQuizQuestion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CorrectIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OptionsText")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("PolicyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Question")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "PolicyId", "Order");
+
+                    b.ToTable("PolicyQuizQuestions");
                 });
 
             modelBuilder.Entity("EduNexus.Foundation.PolicyVersion", b =>
