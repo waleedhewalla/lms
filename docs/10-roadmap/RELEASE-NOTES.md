@@ -67,6 +67,10 @@ Feature-complete release of the delivery plan (Waves A–G).
 - `docs/03-architecture/NCA-PDPL-MAPPING.md` maps the product against NCA ECC-2:2024 (by domain), CCC-2:2024 and data location, and the PDPL. Each item is marked built in, configure, operator responsibility, or gap. It also includes a 72-hour breach runbook, a personal-data inventory, and a gap backlog (G1–G6).
 - Multi-factor authentication is **on by default** in the Keycloak realm: users enrol an authenticator app at first sign-in and enter a code at every sign-in.
 
+## Privacy (PDPL): access and transparency
+- **Download my data** in Settings exports everything EduNexus holds about the signed-in person as JSON: the person record plus 30 related record types. Privacy officers (`privacy:manage`, a new Keycloak group) can export for any person. Every export is audited.
+- **Privacy notice:** publish a policy with code `PRIVACY` and it appears without sign-in at `/privacy?tenant=<slug>`, linked from every page.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

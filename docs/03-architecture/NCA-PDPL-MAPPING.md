@@ -135,7 +135,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | Lawful basis, purpose limitation | 🔧 | Institution's determination. Typical bases: employment, public-interest functions and contract. EduNexus processes staff and governance data for institutional operations. |
 | Data minimisation | 🟡 | People records hold only directory fields (name, type, email, organisation). Avoid putting special-category data in free-text fields; policy and training are the institution's job. |
 | Accuracy, right to correction | ✅ | People records are editable (`PATCH /api/people/{id}`, `person:update`), and changes are audited. |
-| Right of access / to obtain a copy | ❌ G1 | No one-click personal-data export yet. Today an administrator assembles it from the directory, role assignments, tasks and the audit log. **Gap G1.** |
+| Right of access / to obtain a copy | ✅ | Settings → **My data → Download my data** (self-service), or a privacy officer exports any person (`GET /api/people/{id}/personal-data`, `privacy:manage`). The JSON file covers the person and 30 related record types; correspondence is exported as metadata only because its content is institutional. Every export is audited (`PersonalDataExported`). |
 | Right to destruction | 🟡 / ❌ G2 | Records retention and disposal covers correspondence and documents, with two-person approval, legal holds and confirmed deletion. Erasing or pseudonymising a *person* across all modules, while keeping legally required records, is **Gap G2**. |
 | Respond to requests within 30 days (extendable by 30) | 🔧 | Institution's process. Use EduNexus requests and tasks with an SLA policy to track data-subject requests. |
 | Retention limits | ✅ | Retention schedules with legal references; disposal register (`/records`). |
@@ -144,7 +144,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | Data protection officer | 🔧 | Required in specific cases, including public entities whose services involve large-scale processing. Institution's appointment. |
 | Records of processing activities | 🔧 / 🟡 | Institution's register. §7 lists the personal data EduNexus stores, as input to that register. |
 | Cross-border transfer | ✅ / 🟡 | Nothing leaves the deployment by default. Configuring an external AI endpoint or a webhook to an external system can be a cross-border transfer: assess it first, and prefer in-Kingdom or on-premises endpoints. |
-| Privacy notice to data subjects | ❌ G3 | No built-in privacy notice or link in the web app. **Gap G3.** |
+| Privacy notice to data subjects | ✅ | The institution publishes its notice as a policy with code `PRIVACY`, so it gets versioning and approval like any other policy. It is shown without sign-in at `/privacy?tenant=<slug>`, served by `GET /api/public/privacy-notice`, and linked from every page. |
 
 ## 5. Breach response runbook (PDPL 72-hour clock)
 
@@ -161,9 +161,9 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 
 | ID | Gap | Proposed fix | Priority |
 |---|---|---|---|
-| G1 | No one-click personal-data export (access / copy right) | `GET /api/people/{id}/personal-data`: directory record, roles, delegations, tasks, approvals, committee memberships, notification preferences and audit events about the person, as JSON and CSV, audited | High |
+| G1 | ~~No one-click personal-data export~~ | **Done:** self-service and privacy-officer export, audited | ✅ |
 | G2 | No person-level erasure or pseudonymisation | A "forget person" workflow under two-person approval. It pseudonymises the directory record and free-text mentions, keeps records required by retention schedules and legal holds, and logs to the disposal register. | High |
-| G3 | No privacy notice in the web app | A tenant-configurable privacy notice (English and Arabic) linked from the sign-in bar and the footer | Medium |
+| G3 | ~~No privacy notice in the web app~~ | **Done:** published `PRIVACY` policy shown publicly at `/privacy` | ✅ |
 | G4 | No enforced TLS inside the cluster | A Helm option for TLS or a service mesh (mTLS) between API, database, broker, storage and search; document Postgres `sslmode=require` | Medium |
 | G5 | Rate limits are per instance | A shared rate-limit store (Redis is already in the stack) when running more than one API replica | Low |
 | G6 | MinIO SDK may hide errors (found during records work) | Audit the remaining storage calls (e.g. `EnsureBucket`) and verify their results independently, as disposal now does | Medium |

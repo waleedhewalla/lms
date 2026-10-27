@@ -2254,5 +2254,61 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.Forbidden, (await approver.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "X", name = "x",
             entityType = "Document", recordClass = "Administrative", retentionYears = 1, disposition = "Destroy" })).StatusCode);
     }
+    [Fact]
+    public async Task Pdpl_Personal_Data_Export_And_Public_Privacy_Notice()
+    {
+        // Tenant with a slug (for the public notice) and two people.
+        var boot = factory.CreateClient();
+        Auth(boot, Mint(Guid.NewGuid(), ["tenant:create"]));
+        var slug = $"pdpl-{Guid.NewGuid():N}"[..20];
+        var tenant = IdOf(await (await boot.PostAsJsonAsync("/api/tenants", new { slug, name = "Privacy University" })).Content.ReadFromJsonAsync<JsonElement>());
+        var admin = factory.CreateClient();
+        Auth(admin, Mint(tenant, ["person:create", "person:read", "task:create", "task:read"]));
+        var huda = IdOf(await (await admin.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Huda Saleh", email = "huda@example.test" })).Content.ReadFromJsonAsync<JsonElement>());
+        var omar = IdOf(await (await admin.PostAsJsonAsync("/api/people", new { tenantId = tenant, type = "Employee", fullName = "Omar Nasser", email = "omar@example.test" })).Content.ReadFromJsonAsync<JsonElement>());
+        Assert.Equal(HttpStatusCode.Created, (await admin.PostAsJsonAsync("/api/tasks",
+            new { tenantId = tenant, title = "Prepare accreditation file", assigneeId = huda, dueAt = DateTimeOffset.UtcNow.AddDays(5) })).StatusCode);
+
+        // Self-service export: the file contains the person and their tasks, and the export is audited.
+        var self = await ClientAs(tenant, ["inbox:read"], huda).GetAsync($"/api/people/{huda}/personal-data?tenantId={tenant}");
+        Assert.Equal(HttpStatusCode.OK, self.StatusCode);
+        Assert.Equal("application/json", self.Content.Headers.ContentType!.MediaType);
+        Assert.Contains("personal-data-", self.Content.Headers.ContentDisposition!.FileName);
+        var doc = await self.Content.ReadFromJsonAsync<JsonElement>();
+        var sections = doc.GetProperty("sections");
+        Assert.Equal("Huda Saleh", sections.GetProperty("person").GetProperty("fullName").GetString());
+        Assert.Equal("Prepare accreditation file", sections.GetProperty("tasks")[0].GetProperty("title").GetString());
+        Assert.True(sections.TryGetProperty("auditTrail", out _));
+
+        // Someone else's data needs privacy:manage.
+        Assert.Equal(HttpStatusCode.Forbidden, (await ClientAs(tenant, ["person:read"], omar).GetAsync($"/api/people/{huda}/personal-data?tenantId={tenant}")).StatusCode);
+        var officer = factory.CreateClient();
+        Auth(officer, Mint(tenant, ["privacy:manage"]));
+        Assert.Equal(HttpStatusCode.OK, (await officer.GetAsync($"/api/people/{huda}/personal-data?tenantId={tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await officer.GetAsync($"/api/people/{Guid.NewGuid()}/personal-data?tenantId={tenant}")).StatusCode);
+        var outsider = factory.CreateClient();
+        Auth(outsider, Mint(Guid.NewGuid(), ["privacy:manage"]));
+        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync($"/api/people/{huda}/personal-data?tenantId={tenant}")).StatusCode);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(2, await db.AuditEvents.CountAsync(a => a.TenantId == tenant && a.Action == "PersonalDataExported" && a.EntityId == huda.ToString()));
+        }
+
+        // Public privacy notice: 404 until a PRIVACY policy is published; then readable without signing in.
+        var anon = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync($"/api/public/privacy-notice?tenant={slug}")).StatusCode);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Policies.Add(new Policy(Guid.NewGuid(), tenant, "PRIVACY", "Privacy notice", "We process staff data to run the institution.", PolicyStatus.Published, 2));
+            await db.SaveChangesAsync();
+        }
+        var notice = await (await anon.GetAsync($"/api/public/privacy-notice?tenant={slug}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Privacy University", notice.GetProperty("institution").GetString());
+        Assert.Equal(2, notice.GetProperty("version").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await anon.GetAsync($"/api/public/privacy-notice?tenant={tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync("/api/public/privacy-notice?tenant=no-such-place")).StatusCode);
+    }
 }
 

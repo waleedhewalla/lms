@@ -165,6 +165,7 @@
           "person:update",
           "policy:create",
           "policy:read",
+          "privacy:manage",
           "quality:manage",
           "quality:read",
           "records:approve",
@@ -252,6 +253,7 @@
           "person:update",
           "policy:create",
           "policy:read",
+          "privacy:manage",
           "quality:manage",
           "quality:read",
           "records:approve",
@@ -413,6 +415,26 @@
           "records:manage",
           "records:read",
           "search:read"
+        ]
+      }
+    },
+    {
+      "name": "edunexus-privacy-officers",
+      "path": "/edunexus-privacy-officers",
+      "subGroups": [],
+      "attributes": {
+        "description": [
+          "Data protection officer / privacy team: personal-data exports for data-subject requests, audit and records read access."
+        ],
+        "permission": [
+          "audit:read",
+          "inbox:read",
+          "notification:read",
+          "org:read",
+          "person:read",
+          "privacy:manage",
+          "records:hold",
+          "records:read"
         ]
       }
     },

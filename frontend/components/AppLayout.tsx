@@ -36,6 +36,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <Link href="/settings" className="nav-link">⚙️ {L("Settings", "الإعدادات")}</Link>
         </nav>
         <div style={{ marginTop: 'auto', opacity: 0.7, fontSize: '0.8rem' }}>
+          <Link href="/privacy" style={{ color: "inherit" }}>{L("Privacy notice", "إشعار الخصوصية")}</Link>
           <p>{t("app.title")}</p>
         </div>
       </aside>
