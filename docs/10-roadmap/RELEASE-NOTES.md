@@ -127,6 +127,12 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Not yet: reading the inbox or approving while offline. That needs a decision on keeping personal data on the device (part 2, behind a switch, off by default).
 - Fixed an end-to-end test from the module launcher work that matched Next's route announcer as well as the no-access panel.
 
+## Correspondence registers
+- Numbers now run per direction and year, as official registers do: `IN-2026-000001` (incoming), `OUT-...` (outgoing), `INT-...` (internal), restarting each year. The year is the institution's local year (`Calendar:UtcOffsetHours`, default +3), so a letter written just after midnight on 1 January joins the new year. Existing letters keep their `CORR-` numbers. This changes the format of numbers on new letters; the field name and type are unchanged.
+- New register: `GET /api/correspondence/register` (filter by year, direction, status, search; paged) and `.../register/export` as a spreadsheet with Gregorian, Hijri or both dates. The register shows who received each letter and who got a copy, and never the letter body.
+- Recipients can be To or Cc (copy). Existing recipients are To. One new column, no data change.
+- **Security fix:** the thread and routing-slip endpoints did not apply the confidential check that the list and detail endpoints do, so a user without `correspondence:confidential` could read a confidential letter's content and directives through them, or attach a reply to it. All correspondence routes now treat a confidential letter as not found unless the caller is cleared, and a thread stops where the caller's clearance does.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

@@ -128,7 +128,11 @@ public sealed record Correspondence(
     }
 }
 
-public sealed record Correspondent(Guid Id, Guid TenantId, Guid CorrespondenceId, Guid? PersonId, string DisplayName, bool IsExternal);
+/// <summary>To = the addressee who must act; Cc = receives a copy for information.</summary>
+public enum RecipientKind { To, Cc }
+
+public sealed record Correspondent(Guid Id, Guid TenantId, Guid CorrespondenceId, Guid? PersonId, string DisplayName, bool IsExternal,
+    RecipientKind Kind = RecipientKind.To);
 
 public enum ApprovalStatus { Pending, Approved, Rejected, Cancelled, ChangesRequested }
 public enum ApprovalPriority { Normal, Accelerated }

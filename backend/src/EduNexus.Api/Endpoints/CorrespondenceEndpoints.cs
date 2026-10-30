@@ -2,6 +2,9 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.Extensions.Configuration;
 using EduNexus.Api.Auth;
 using EduNexus.Api.Events;
 using EduNexus.Foundation;
@@ -19,12 +22,48 @@ public static class CorrespondenceEndpoints
     public static void MapCorrespondenceEndpoints(this IEndpointRouteBuilder app)
     {
         var corr = app.MapGroup("/api/correspondence").WithTags("Correspondence").RequireAuthorization();
-        
+
+        // The register: every letter of a year in numbering order, filterable, with who received it and who got a copy.
+        // Confidential letters appear only to callers cleared for them. Content is never part of the register.
+        corr.MapGet("/register", async (AppDbContext db, HttpContext ctx, IConfiguration config, Guid tenantId, int? year, string? type,
+            string? status, string? q, int? skip, int? take, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+            if (BadFilter(type, status) is { } bad) return bad;
+            await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            var rows = await RegisterRowsAsync(db, ctx, config, tenantId, year, type, status, q, skip ?? 0, Math.Clamp(take ?? 50, 1, 200), ct);
+            return Results.Ok(rows);
+        });
+
+        // The same register as a spreadsheet; calendar=hijri|both adds Umm al-Qura dates (as the report exports do).
+        corr.MapGet("/register/export", async (AppDbContext db, HttpContext ctx, IConfiguration config, Guid tenantId, int? year, string? type,
+            string? status, string? q, string? calendar, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+            if (BadFilter(type, status) is { } bad) return bad;
+            var mode = (calendar ?? "gregorian").Trim().ToLowerInvariant();
+            if (mode is not ("gregorian" or "hijri" or "both")) return Results.BadRequest(new { error = "calendar must be gregorian, hijri or both." });
+            await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            var page = await RegisterRowsAsync(db, ctx, config, tenantId, year, type, status, q, 0, 10_000, ct);
+            var offset = UtcOffset(config);
+            var table = page.Items.Select(r => new Dictionary<string, object?>
+            {
+                ["number"] = r.Number, ["type"] = r.Type, ["subject"] = r.Subject, ["status"] = r.Status, ["priority"] = r.Priority,
+                ["confidential"] = r.IsConfidential, ["created_at"] = r.CreatedAt,
+                ["to"] = string.Join("; ", r.Recipients.Where(x => x.Kind == nameof(RecipientKind.To)).Select(x => x.DisplayName)),
+                ["cc"] = string.Join("; ", r.Recipients.Where(x => x.Kind == nameof(RecipientKind.Cc)).Select(x => x.DisplayName)),
+            }).ToList();
+            var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(ReportEndpoints.ToCsv(ReportEndpoints.WithCalendar(table, mode, offset)))).ToArray();
+            return Results.File(bytes, "text/csv; charset=utf-8", $"correspondence-register-{year?.ToString() ?? "all"}.csv");
+        });
+
         corr.MapGet("/", async (AppDbContext db, HttpContext ctx, Guid tenantId, string? status, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
-            var canSeeConfidential = ctx.User.HasPermission("correspondence:confidential");
+            var canSeeConfidential = CanSeeConfidential(ctx.User);
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var q = db.Correspondences.Where(c => c.TenantId == tenantId);
             if (!canSeeConfidential) q = q.Where(c => !c.IsConfidential);
@@ -32,7 +71,7 @@ public static class CorrespondenceEndpoints
             return Results.Ok(await q.OrderByDescending(c => c.CreatedAt).ToListAsync(ct));
         });
 
-        corr.MapPost("/", async (AppDbContext db, HttpContext ctx, CreateCorrespondenceReq req, CancellationToken ct) =>
+        corr.MapPost("/", async (AppDbContext db, HttpContext ctx, IConfiguration config, CreateCorrespondenceReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("correspondence:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
@@ -50,17 +89,22 @@ public static class CorrespondenceEndpoints
             try { c = Correspondence.Create(req.TenantId, type, req.Subject, req.Content, req.AuthorId, priority, req.IsConfidential, req.ParentCorrespondenceId); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            if (req.ParentCorrespondenceId.HasValue && !await db.Correspondences.AnyAsync(x => x.TenantId == req.TenantId && x.Id == req.ParentCorrespondenceId.Value, ct))
+            if (req.ParentCorrespondenceId.HasValue && !await db.Correspondences.AnyAsync(x => x.TenantId == req.TenantId && x.Id == req.ParentCorrespondenceId.Value
+                    && (!x.IsConfidential || CanSeeConfidential(ctx.User)), ct))
                 return Results.NotFound(new { error = "Parent correspondence not found." });
-            var seq = await Sequences.NextAsync(db, req.TenantId, "correspondence", ct);
-            c = c with { Number = $"CORR-{DateTimeOffset.UtcNow:yyyy}-{seq:D6}" };
+            // One register per direction and year, as official correspondence is kept: IN-2026-000001, OUT-2026-000001, INT-2026-000001.
+            var numberYear = LocalYear(config, c.CreatedAt);
+            var seq = await Sequences.NextAsync(db, req.TenantId, $"correspondence:{type}:{numberYear}", ct);
+            c = c with { Number = $"{Prefix(type)}-{numberYear}-{seq:D6}" };
             db.Correspondences.Add(c);
             foreach (var r in req.Recipients ?? [])
             {
+                if (!Enum.TryParse<RecipientKind>(r.Kind ?? "To", true, out var kind))
+                    return Results.BadRequest(new { error = "Recipient kind must be To|Cc." });
                 Guid? pid = Guid.TryParse(r.PersonId, out var g) ? g : null;
                 if (pid.HasValue && !await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == pid.Value, ct))
                     return Results.BadRequest(new { error = $"Recipient person {r.PersonId} not found in tenant." });
-                db.Correspondents.Add(new Correspondent(Guid.NewGuid(), req.TenantId, c.Id, pid, r.DisplayName, r.IsExternal));
+                db.Correspondents.Add(new Correspondent(Guid.NewGuid(), req.TenantId, c.Id, pid, r.DisplayName, r.IsExternal, kind));
             }
             DomainEvents.Record(db, req.TenantId, "CorrespondenceCreated", "CorrespondenceCreated",
                 nameof(Correspondence), c.Id.ToString(),
@@ -77,7 +121,7 @@ public static class CorrespondenceEndpoints
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
-            if (c is null) return Results.NotFound(new { error = "Correspondence not found." });
+            if (c is null || (c.IsConfidential && !CanSeeConfidential(ctx.User))) return Results.NotFound(new { error = "Correspondence not found." });
             if (c.Status != CorrespondenceStatus.Draft)
                 return Results.Conflict(new { error = $"Only Draft correspondence can be submitted (now {c.Status})." });
             if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.ReviewerId, ct))
@@ -106,20 +150,21 @@ public static class CorrespondenceEndpoints
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var current = await db.Correspondences.FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == id, ct);
-            if (current is null) return Results.NotFound(new { error = "Correspondence not found." });
+            if (current is null || (current.IsConfidential && !CanSeeConfidential(ctx.User))) return Results.NotFound(new { error = "Correspondence not found." });
+            var cleared = CanSeeConfidential(ctx.User);
 
             Correspondence? root = current;
             var visited = new System.Collections.Generic.HashSet<Guid> { current.Id };
             while (root.ParentCorrespondenceId.HasValue && !visited.Contains(root.ParentCorrespondenceId.Value))
             {
                 var parent = await db.Correspondences.FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == root.ParentCorrespondenceId.Value, ct);
-                if (parent is null) break;
+                if (parent is null || (parent.IsConfidential && !cleared)) break;   // the chain stops where the caller's clearance does
                 visited.Add(parent.Id);
                 root = parent;
             }
 
             var replies = await db.Correspondences
-                .Where(c => c.TenantId == tenantId && c.ParentCorrespondenceId == id)
+                .Where(c => c.TenantId == tenantId && c.ParentCorrespondenceId == id && (cleared || !c.IsConfidential))
                 .OrderBy(c => c.CreatedAt)
                 .ToListAsync(ct);
 
@@ -131,6 +176,8 @@ public static class CorrespondenceEndpoints
             if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            if (!await db.Correspondences.AnyAsync(x => x.TenantId == tenantId && x.Id == id && (!x.IsConfidential || CanSeeConfidential(ctx.User)), ct))
+                return Results.NotFound(new { error = "Correspondence not found." });
             var slips = await db.CorrespondenceRoutingSlips
                 .Where(s => s.TenantId == tenantId && s.CorrespondenceId == id)
                 .OrderByDescending(s => s.CreatedAt)
@@ -146,7 +193,7 @@ public static class CorrespondenceEndpoints
             if (string.IsNullOrWhiteSpace(req.Instructions)) return Results.BadRequest(new { error = "Instructions are required." });
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
-            if (c is null) return Results.NotFound(new { error = "Correspondence not found." });
+            if (c is null || (c.IsConfidential && !CanSeeConfidential(ctx.User))) return Results.NotFound(new { error = "Correspondence not found." });
 
             var slip = new CorrespondenceRoutingSlip(
                 Guid.NewGuid(), req.TenantId, id, req.FromPersonId, req.ToUnitId, req.ToPersonId,
@@ -178,6 +225,8 @@ public static class CorrespondenceEndpoints
             if (!ctx.User.HasPermission("correspondence:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            if (!await db.Correspondences.AnyAsync(x => x.TenantId == tenantId && x.Id == id && (!x.IsConfidential || CanSeeConfidential(ctx.User)), ct))
+                return Results.NotFound(new { error = "Correspondence not found." });
             var slip = await db.CorrespondenceRoutingSlips.FirstOrDefaultAsync(s => s.TenantId == tenantId && s.CorrespondenceId == id && s.Id == slipId, ct);
             if (slip is null) return Results.NotFound(new { error = "Routing slip not found." });
             db.Entry(slip).CurrentValues.SetValues(slip with { IsCompleted = true, CompletedAt = DateTimeOffset.UtcNow });
@@ -185,5 +234,65 @@ public static class CorrespondenceEndpoints
             await scope.CommitAsync(ct);
             return Results.Ok(slip with { IsCompleted = true, CompletedAt = DateTimeOffset.UtcNow });
         });
+    }
+
+    private static bool CanSeeConfidential(ClaimsPrincipal user) => user.HasPermission("correspondence:confidential");
+
+    private static string Prefix(CorrespondenceType type) => type switch
+    {
+        CorrespondenceType.Incoming => "IN",
+        CorrespondenceType.Outgoing => "OUT",
+        _ => "INT",
+    };
+
+    private static TimeSpan UtcOffset(IConfiguration config) => TimeSpan.FromHours(config.GetValue("Calendar:UtcOffsetHours", 3.0));
+
+    /// <summary>The year on the institution's wall clock, so a letter written just after midnight on 1 January joins the new year's register.</summary>
+    private static int LocalYear(IConfiguration config, DateTimeOffset at) => at.ToOffset(UtcOffset(config)).Year;
+
+    private static IResult? BadFilter(string? type, string? status)
+    {
+        if (!string.IsNullOrWhiteSpace(type) && !Enum.TryParse<CorrespondenceType>(type, true, out _))
+            return Results.BadRequest(new { error = "Type must be Incoming|Outgoing|Internal." });
+        if (!string.IsNullOrWhiteSpace(status) && !Enum.TryParse<CorrespondenceStatus>(status, true, out _))
+            return Results.BadRequest(new { error = "Status is not a known correspondence status." });
+        return null;
+    }
+
+    public sealed record RegisterRecipient(string DisplayName, bool IsExternal, string Kind);
+    public sealed record RegisterRow(Guid Id, string Number, string Type, string Subject, string Status, string Priority, bool IsConfidential,
+        DateTimeOffset CreatedAt, Guid AuthorId, Guid? ParentCorrespondenceId, List<RegisterRecipient> Recipients);
+    public sealed record RegisterPage(int Total, int Skip, int Take, List<RegisterRow> Items);
+
+    /// <summary>Call inside a TenantScope. Newest first within the year, like a physical register read from the top.</summary>
+    private static async Task<RegisterPage> RegisterRowsAsync(AppDbContext db, HttpContext ctx, IConfiguration config, Guid tenantId, int? year,
+        string? type, string? status, string? q, int skip, int take, CancellationToken ct)
+    {
+        var query = db.Correspondences.Where(c => c.TenantId == tenantId);
+        if (!CanSeeConfidential(ctx.User)) query = query.Where(c => !c.IsConfidential);
+        if (year is { } y)
+        {
+            var offset = UtcOffset(config);
+            // The year on the institution's clock, compared as instants (the database only takes UTC).
+            var from = new DateTimeOffset(y, 1, 1, 0, 0, 0, offset).ToUniversalTime();
+            var to = new DateTimeOffset(y + 1, 1, 1, 0, 0, 0, offset).ToUniversalTime();
+            query = query.Where(c => c.CreatedAt >= from && c.CreatedAt < to);
+        }
+        if (Enum.TryParse<CorrespondenceType>(type, true, out var t)) query = query.Where(c => c.Type == t);
+        if (Enum.TryParse<CorrespondenceStatus>(status, true, out var st)) query = query.Where(c => c.Status == st);
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var like = "%" + q.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            query = query.Where(c => EF.Functions.ILike(c.Subject, like) || EF.Functions.ILike(c.Number, like));
+        }
+        var total = await query.CountAsync(ct);
+        var page = await query.OrderByDescending(c => c.CreatedAt).ThenByDescending(c => c.Number).Skip(skip).Take(take).ToListAsync(ct);
+        var ids = page.Select(c => c.Id).ToList();
+        var people = await db.Correspondents.Where(x => x.TenantId == tenantId && ids.Contains(x.CorrespondenceId)).ToListAsync(ct);
+        var items = page.Select(c => new RegisterRow(c.Id, c.Number, c.Type.ToString(), c.Subject, c.Status.ToString(), c.Priority.ToString(), c.IsConfidential,
+            c.CreatedAt, c.AuthorId, c.ParentCorrespondenceId,
+            people.Where(x => x.CorrespondenceId == c.Id).OrderBy(x => x.Kind).ThenBy(x => x.DisplayName)
+                .Select(x => new RegisterRecipient(x.DisplayName, x.IsExternal, x.Kind.ToString())).ToList())).ToList();
+        return new RegisterPage(total, skip, take, items);
     }
 }

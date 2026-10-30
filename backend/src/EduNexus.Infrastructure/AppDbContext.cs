@@ -177,6 +177,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.CorrespondenceId });
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(10).HasDefaultValue(RecipientKind.To);
         });
         b.Entity<Approval>(e =>
         {

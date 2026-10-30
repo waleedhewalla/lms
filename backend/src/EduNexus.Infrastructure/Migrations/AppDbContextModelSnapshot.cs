@@ -714,6 +714,13 @@ namespace EduNexus.Infrastructure.Migrations
                     b.Property<bool>("IsExternal")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("To");
+
                     b.Property<Guid?>("PersonId")
                         .HasColumnType("uuid");
 
