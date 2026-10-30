@@ -139,6 +139,12 @@ Feature-complete release of the delivery plan (Waves A–G).
 - The shared comments and activities panel (`Chatter`, also on Approvals and Meetings) defaulted to `http://localhost:5000` with no token, so it only worked on a developer machine. It now uses the app's API address and the signed-in token.
 - Removed the Correspondence translation strings the old screen used.
 
+## Personal calendar link
+- On the Calendar page a signed-in person can create a private link and subscribe to it from a phone or Outlook (it refreshes about hourly). The feed holds the institution's dates and policy reviews, plus what concerns that person: meetings of their committees, their open tasks and the actions assigned to them. Other people's tasks and other committees' meetings are not in it.
+- The link is a secret: it is shown once, stored only as a hash, expires after 90 days (`CalendarFeed__TokenDays`), and a new link replaces the old one. A person can turn it off at any time. A link stops working when the person is made inactive or erased. Creating and revoking are audited, never the link itself. One new table (`CalendarFeedTokens`, tenant-isolated).
+- Anyone holding the link can read that person's calendar without signing in, so it should be treated like a password and used over https. All failures answer the same 404.
+- Personal-data erasure now also deletes the person's calendar links.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

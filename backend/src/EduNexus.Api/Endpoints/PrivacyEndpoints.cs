@@ -168,7 +168,8 @@ public static class PrivacyEndpoints
             var notes = await db.Notifications.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
             var follows = await db.EntityFollowers.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
             var shares = await db.DocumentShares.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
-            db.RemoveRange(roles); db.RemoveRange(delegations); db.RemoveRange(prefs); db.RemoveRange(notes); db.RemoveRange(follows); db.RemoveRange(shares);
+            var feeds = await db.CalendarFeedTokens.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
+            db.RemoveRange(roles); db.RemoveRange(delegations); db.RemoveRange(prefs); db.RemoveRange(notes); db.RemoveRange(follows); db.RemoveRange(shares); db.RemoveRange(feeds);
 
             // Institutional records kept, identity replaced.
             var correspondents = await db.Correspondents.Where(x => x.TenantId == t && x.PersonId == pid).ToListAsync(ct);
@@ -179,7 +180,7 @@ public static class PrivacyEndpoints
             foreach (var m in memberships) db.Entry(m).CurrentValues.SetValues(m with { TermEndsAt = now });
 
             var summary = $"Directory record pseudonymised as '{r.Pseudonym}'. Deleted: {roles.Count} role assignment(s), {delegations.Count} delegation(s), "
-                + $"{prefs.Count} notification preference(s), {notes.Count} notification(s), {follows.Count} follow(s), {shares.Count} document share(s). "
+                + $"{prefs.Count} notification preference(s), {notes.Count} notification(s), {follows.Count} follow(s), {shares.Count} document share(s), {feeds.Count} calendar link(s). "
                 + $"Renamed in {correspondents.Count} correspondence participant row(s); {ai.Count} AI interaction(s) redacted; {memberships.Count} committee term(s) ended. "
                 + "Votes, approvals, minutes and the audit trail are kept and now refer to the pseudonym. Remove or disable the account in the identity provider.";
             var executed = r with { Status = ErasureStatus.Executed, ExecutedAt = now, Summary = summary };
