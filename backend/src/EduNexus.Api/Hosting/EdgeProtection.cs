@@ -1,15 +1,16 @@
 using System.Net;
 using System.Security.Claims;
-using System.Threading.RateLimiting;
 using EduNexus.Api.Integrations;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using StackExchange.Redis;
 
 namespace EduNexus.Api.Hosting;
 
 /// <summary>
 /// Edge protections that do not depend on the ingress: trusted-proxy handling for X-Forwarded-*,
-/// per-caller rate limiting, and an internal-only /metrics endpoint.
+/// per-caller rate limiting (counted in Redis when configured, so replicas share one budget), and an internal-only
+/// /metrics endpoint.
 /// </summary>
 public static class EdgeProtection
 {
@@ -20,6 +21,9 @@ public static class EdgeProtection
     /// <summary>Expensive endpoints get their own, tighter budget.</summary>
     private static readonly string[] ExpensivePrefixes =
         ["/api/ai", "/api/search", "/api/auth/dev-token", "/api/intelligence"];
+
+    /// <summary>Limits per caller per minute: the general budget, and the tighter one for expensive endpoints.</summary>
+    public sealed record RateLimitSettings(bool Enabled, int PerMinute, int ExpensivePerMinute);
 
     public static IServiceCollection AddEdgeProtection(this IServiceCollection services, IConfiguration config)
     {
@@ -39,28 +43,40 @@ public static class EdgeProtection
             }
         });
 
-        var enabled = config.GetValue("RateLimiting:Enabled", true);
-        var perMinute = config.GetValue("RateLimiting:PermitsPerMinute", 600);
-        var expensivePerMinute = config.GetValue("RateLimiting:ExpensivePermitsPerMinute", 60);
-        services.AddRateLimiter(o =>
+        services.AddSingleton(new RateLimitSettings(
+            config.GetValue("RateLimiting:Enabled", true),
+            config.GetValue("RateLimiting:PermitsPerMinute", 600),
+            config.GetValue("RateLimiting:ExpensivePermitsPerMinute", 60)));
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<LocalRateLimitStore>();
+
+        // Redis is optional: without a connection string every instance counts for itself (the limit is then per
+        // instance), exactly as before. With one, replicas share the count, and Redis trouble falls back to local.
+        var redisConnection = config["RateLimiting:Redis:ConnectionString"];
+        if (string.IsNullOrWhiteSpace(redisConnection))
+            services.AddSingleton<IRateLimitStore>(sp => sp.GetRequiredService<LocalRateLimitStore>());
+        else
         {
-            o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            o.OnRejected = (ctx, _) =>
-            {
-                if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retry))
-                    ctx.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retry.TotalSeconds)).ToString();
-                return ValueTask.CompletedTask;
-            };
-            if (!enabled) return;
-            o.GlobalLimiter = PartitionedRateLimiter.CreateChained(
-                PartitionedRateLimiter.Create<HttpContext, string>(ctx => IsExempt(ctx)
-                    ? RateLimitPartition.GetNoLimiter("exempt")
-                    : RateLimitPartition.GetFixedWindowLimiter(CallerKey(ctx), _ => Window(perMinute))),
-                PartitionedRateLimiter.Create<HttpContext, string>(ctx => IsExpensive(ctx)
-                    ? RateLimitPartition.GetFixedWindowLimiter("x:" + CallerKey(ctx), _ => Window(expensivePerMinute))
-                    : RateLimitPartition.GetNoLimiter("cheap")));
-        });
+            services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(RedisOptions(redisConnection)));
+            services.AddSingleton<IRateLimitStore>(sp => new ResilientRateLimitStore(
+                new RedisRateLimitStore(sp.GetRequiredService<IConnectionMultiplexer>(), sp.GetRequiredService<TimeProvider>()),
+                sp.GetRequiredService<LocalRateLimitStore>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<ResilientRateLimitStore>>()));
+        }
         return services;
+    }
+
+    /// <summary>
+    /// Redis options for the limiter: never block startup or a request on Redis. Timeouts are short unless the connection
+    /// string sets them, and the client keeps retrying the connection in the background.
+    /// </summary>
+    internal static ConfigurationOptions RedisOptions(string connectionString)
+    {
+        var o = ConfigurationOptions.Parse(connectionString);
+        o.AbortOnConnectFail = false;
+        if (!connectionString.Contains("connectTimeout", StringComparison.OrdinalIgnoreCase)) o.ConnectTimeout = 500;
+        if (!connectionString.Contains("syncTimeout", StringComparison.OrdinalIgnoreCase)) o.SyncTimeout = 150;
+        if (!connectionString.Contains("asyncTimeout", StringComparison.OrdinalIgnoreCase)) o.AsyncTimeout = 150;
+        return o;
     }
 
     /// <summary>Call after UseForwardedHeaders and UseAuthentication so the caller key is the real user/IP.</summary>
@@ -77,20 +93,33 @@ public static class EdgeProtection
             }
             await next();
         });
-        app.UseRateLimiter();
+        var settings = app.Services.GetRequiredService<RateLimitSettings>();
+        if (settings.Enabled)
+        {
+            app.Services.GetRequiredService<IRateLimitStore>();   // connect to Redis now, not on the first request
+            app.Use(async (ctx, next) =>
+            {
+                if (IsExempt(ctx)) { await next(); return; }
+                var store = ctx.RequestServices.GetRequiredService<IRateLimitStore>();
+                var key = CallerKey(ctx);
+                // Every request counts against the general budget; expensive ones against their own as well.
+                var decision = await store.HitAsync("g:" + key, settings.PerMinute, ctx.RequestAborted);
+                if (decision.Allowed && IsExpensive(ctx))
+                    decision = await store.HitAsync("x:" + key, settings.ExpensivePerMinute, ctx.RequestAborted);
+                if (!decision.Allowed)
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                    ctx.Response.Headers.RetryAfter = decision.RetryAfterSeconds.ToString();
+                    return;
+                }
+                await next();
+            });
+        }
         return app;
     }
 
     /// <summary>In-process (no socket, e.g. tests) or loopback/private/link-local peers count as internal.</summary>
     public static bool IsInternal(IPAddress? ip) => ip is null || OutboundUrlGuard.IsBlocked(ip);
-
-    private static FixedWindowRateLimiterOptions Window(int permits) => new()
-    {
-        PermitLimit = permits,
-        Window = TimeSpan.FromMinutes(1),
-        QueueLimit = 0,
-        AutoReplenishment = true,
-    };
 
     private static bool IsExempt(HttpContext ctx) =>
         ctx.Request.Path.StartsWithSegments("/health") || ctx.Request.Path.StartsWithSegments("/metrics");

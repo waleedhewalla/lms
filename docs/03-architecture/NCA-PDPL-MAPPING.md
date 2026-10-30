@@ -165,7 +165,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | G2 | ~~No person-level erasure or pseudonymisation~~ | **Done:** erasure requests with two-person approval, a legal-hold check and pseudonymisation; institutional records are kept | ✅ |
 | G3 | ~~No privacy notice in the web app~~ | **Done:** published `PRIVACY` policy shown publicly at `/privacy` | ✅ |
 | G4 | No enforced TLS inside the cluster | A Helm option for TLS or a service mesh (mTLS) between API, database, broker, storage and search; document Postgres `sslmode=require` | Medium |
-| G5 | Rate limits are per instance | A shared rate-limit store (Redis is already in the stack) when running more than one API replica | Low |
+| G5 | ~~Rate limits are per instance~~ | **Done:** request counts are kept in Redis (when `RateLimiting__Redis__ConnectionString` is set, which the Helm chart does by default), so replicas share one budget. If Redis fails the API keeps serving and counts per instance until it returns, so availability never depends on Redis | ✅ |
 | G6 | ~~MinIO SDK may hide errors (found during records work)~~ | **Done:** every storage claim is checked by an independent signed request: the bucket exists, an object is gone (only `NoSuchKey` counts, not a missing bucket), an uploaded file exists with the declared size. Failures answer 503 or leave disposal pending. Known limit: the client-declared SHA-256 is recorded, not recomputed, and files attached as evidence are not yet removed by records disposal | ✅ |
 | — | National e-signature (Nafath / UAE PASS) | Needs a licensed trust service provider (e.g. emdha); waiting on a vendor decision | Product roadmap |
 
