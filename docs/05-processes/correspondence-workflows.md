@@ -38,9 +38,9 @@ any unfinished letter ── close (records:manage, reason) ─▶ Closed
 | Decision (`DECISION`) | Authorised official | Everyone concerned | Official decisions | 1 `LEGAL_ADVISOR` (3 d) · 2 The recipient, notification (2 d) · Close | |
 | Circular (`CIRCULAR`) | An official | A group or units | General notices | 1 Line manager (2 d) · 2 Dean (3 d) · Close | |
 | Information request or complaint (`INFO_REQUEST`) | Any staff member | The competent unit | Information or a complaint | 1 The recipient or the competent unit's head (5 d) · Close | Needs a recipient or a receiving unit |
-| Between college administrations (`COLLEGE_ADMIN`) | An administration of the college | Another administration of the same college | Coordination inside a college | 1 Head of the sending administration (3 d) · 2 Head of the receiving administration (3 d) · Close | Needs a receiving unit |
-| Between departments of a college (`COLLEGE_DEPT`) | A department of the college | Another department of the same college | Coordination between departments | 1 Head of the sending department (3 d) · 2 Head of the receiving department (3 d) · Close | Needs a receiving unit |
-| To the dean or vice dean (`TO_DEAN`) | A member or unit of the college | Vice dean, then dean | A matter put to the college leadership | 1 Line manager (2 d) · 2 Vice dean = deputy of the receiving unit (3 d) · 3 Dean = head of the receiving unit (3 d) · Close | The receiving unit is the college; it must have a deputy, or remove step 2 |
+| Between college administrations (`COLLEGE_ADMIN`) | An administration of the college | Another administration of the same college | Coordination inside a college | 1 Head of the sending administration (3 d) · 2 Head of the receiving administration (3 d) · Close | Needs a receiving unit **in the sender's college** |
+| Between departments of a college (`COLLEGE_DEPT`) | A department of the college | Another department of the same college | Coordination between departments | 1 Head of the sending department (3 d) · 2 Head of the receiving department (3 d) · Close | Needs a receiving unit in the sender's college |
+| To the dean or vice dean (`TO_DEAN`) | A member or unit of the college | Vice dean, then dean | A matter put to the college leadership | 1 Line manager (2 d) · 2 Vice dean = deputy of the receiving unit (3 d), **skipped when the college has no vice dean** · 3 Dean = head of the receiving unit (3 d) · Close | The receiving unit is the college itself, which must be the sender's college |
 
 At every step the approver may **approve**, **reject** (reason required) or **return for changes** (reason required). An approver on leave is replaced by their active delegate (existing delegation).
 
@@ -65,7 +65,7 @@ Roles the standard workflows look for (create them, or edit the workflows): `FIN
 2. **Who closes a letter.** Assumed: the last step of the workflow closes it; the author may withdraw; records may close any unfinished letter.
 3. **After a return**, does the letter restart from the first step (assumed) or resume at the step that returned it?
 4. The **student request** type is created switched off. Switch it on when student affairs is ready to receive them.
-5. College types: the system does not yet check that the sender and the receiving unit belong to the *same* college; the vice dean step is mandatory in `TO_DEAN` until the workflow is edited.
+5. College types: the sender's department and the receiving unit must share the same top-level unit (the college); the vice dean step is optional (passed over when nobody holds it). Tenants seeded before this change keep the older, mandatory vice dean step until their `CORR_TO_DEAN` workflow is edited (add `"optional": true` to that step).
 6. Step names, deadlines and the role codes above are the proposed defaults.
 
 ## On screen

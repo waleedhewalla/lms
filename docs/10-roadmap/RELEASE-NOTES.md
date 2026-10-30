@@ -197,6 +197,11 @@ Feature-complete release of the delivery plan (Waves A–G).
 - API: an author may now open their own letter without the general read permission (`GET /api/correspondence/{id}`); new `GET /api/correspondence/units` lists the units a letter can be addressed to, for anyone who may write a letter (no directory permission needed).
 - Tests: unit tests for the action rules, step states and history labels; three end-to-end specs on the real API (typed letter returned, edited, resent and withdrawn; student view; the earlier register flow). The end-to-end specs run locally and are not part of CI.
 
+## College letters: same-college rule and optional vice dean
+- Letters between college administrations, between departments of a college, and to the dean must now stay inside one college: the sender's department and the receiving unit must share the same top-level unit. A sender with no department cannot send them; the refusal says why. The general "between departments" type is not limited.
+- In a letter to the dean, the vice dean step is passed over when the college has no vice dean (the history records the skip). Workflow steps can now carry `"optional": true` for this. New tenants get it from `seed-defaults`; tenants seeded earlier keep the mandatory step until their `CORR_TO_DEAN` workflow is edited.
+- **Compatibility:** letters already written to a unit outside the sender's college under these three types are not changed; only new letters and new sends are checked. No migration.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

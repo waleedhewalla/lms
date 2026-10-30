@@ -52,7 +52,7 @@ public static class CorrespondenceWorkflows
             By("receiving_head", "Head of the receiving department", "target_head", 3)),
         Flow("CORR_TO_DEAN", "To the dean or vice dean",
             By("line_manager", "Line manager review", "submitter_head", 2),
-            By("vice_dean", "Vice dean review", "target_deputy", 3),
+            By("vice_dean", "Vice dean review", "target_deputy", 3, optional: true),
             By("dean", "Dean decision", "target_head", 3)),
         Flow("CORR_INFO_REQUEST", "Information request or complaint",
             By("competent_unit", "Competent unit answer", "recipient", 5)),
@@ -61,8 +61,8 @@ public static class CorrespondenceWorkflows
     private static Dictionary<string, object?> Step(string id, string label, int days, Dictionary<string, object?>? when) =>
         new() { ["id"] = id, ["type"] = "approval", ["label"] = label, ["slaDays"] = days, ["workingDays"] = true, ["notify"] = true, ["skipDuplicate"] = true, ["when"] = when };
 
-    private static Dictionary<string, object?> By(string id, string label, string from, int days, Dictionary<string, object?>? when = null)
-    { var s = Step(id, label, days, when); s["assigneeFrom"] = from; return s; }
+    private static Dictionary<string, object?> By(string id, string label, string from, int days, Dictionary<string, object?>? when = null, bool optional = false)
+    { var s = Step(id, label, days, when); s["assigneeFrom"] = from; if (optional) s["optional"] = true; return s; }
 
     private static Dictionary<string, object?> Role(string id, string label, string role, int days, Dictionary<string, object?>? when = null)
     { var s = Step(id, label, days, when); s["roleCode"] = role; return s; }
