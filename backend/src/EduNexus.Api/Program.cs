@@ -194,6 +194,7 @@ app.MapGet("/", () => Results.Ok(new { name = "EduNexus OS V2 API", release = "R
 // Map Endpoint Modules (1-F Program.cs Vertical Slice Extraction)
 app.MapFoundationEndpoints();
 app.MapCorrespondenceTypeEndpoints();
+app.MapCorrespondenceFlowEndpoints();
 app.MapCorrespondenceEndpoints();
 app.MapGovernanceEndpoints();
 app.MapDocumentEndpoints();

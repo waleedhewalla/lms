@@ -436,7 +436,7 @@ public static class IntelligenceEndpoints
                     using var doc = JsonDocument.Parse(req.NodesJson);
                     if (doc.RootElement.ValueKind == JsonValueKind.Array)
                     {
-                        var validTypes = new[] { "start", "approval", "task", "notification", "end" };
+                        var validTypes = new[] { "start", "approval", "task", "notification", "close", "end" };
                         foreach (var node in doc.RootElement.EnumerateArray())
                         {
                             if (node.TryGetProperty("type", out var tProp) && tProp.ValueKind == JsonValueKind.String)
@@ -580,7 +580,7 @@ public static class IntelligenceEndpoints
             if (a is null) return Results.NotFound(new { error = "Approval not found." });
             return Results.Ok(a);
         });
-        approvals.MapPost("/{id:guid}/decide", async (AppDbContext db, HttpContext ctx, Guid id, DecideApprovalReq req, CancellationToken ct) =>
+        approvals.MapPost("/{id:guid}/decide", async (AppDbContext db, HttpContext ctx, IConfiguration config, Guid id, DecideApprovalReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("approval:decide")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
@@ -590,15 +590,33 @@ public static class IntelligenceEndpoints
             var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
             if (actor is null || (req.DecidedBy is { } claimed && claimed != actor) || a.AssigneeId != actor) return Results.Forbid();
             if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval is already {a.Status}." });
+            // A letter that follows a workflow must say why when it is rejected; the author is told.
+            var flowLetter = a.EntityType == nameof(Correspondence) && await WorkflowRunner.OwnsAsync(db, req.TenantId, a, ct);
+            if (flowLetter && !req.Approve && (req.Comment?.Trim().Length ?? 0) < 3) return Results.BadRequest(new { error = "A reason of at least 3 characters is required to reject a letter." });
             var newStatus = req.Approve ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
             db.Entry(a).CurrentValues.SetValues(a with { Status = newStatus, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = actor, Comment = req.Comment });
+            WorkflowRunner.DecisionOutcome outcome;
+            try { outcome = await WorkflowRunner.OnApprovalDecidedAsync(db, req.TenantId, a, req.Approve, ct, CorrespondenceFlowEndpoints.CalendarFor(config)); }
+            catch (KeyNotFoundException ex) when (a.EntityType == nameof(Correspondence))
+            {
+                // The next approver cannot be found: nothing is saved, so the decision can be repeated once the organisation is completed.
+                return Results.UnprocessableEntity(new { error = ex.Message });
+            }
             if (a.EntityType == nameof(Correspondence))
             {
                 var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == a.EntityId, ct);
                 if (c != null)
                 {
-                    var status = req.Approve ? CorrespondenceStatus.Approved : CorrespondenceStatus.Rejected;
+                    CorrespondenceStatus status;
+                    if (!req.Approve) status = CorrespondenceStatus.Rejected;
+                    else if (!outcome.Owned) status = CorrespondenceStatus.Approved;
+                    else if (outcome.Status == WorkflowInstanceStatus.Running) status = CorrespondenceStatus.Submitted;
+                    else status = outcome.Closed ? CorrespondenceStatus.Closed : CorrespondenceStatus.Approved;
                     db.Entry(c).CurrentValues.SetValues(c with { Status = status });
+                    if (outcome.Owned && status != CorrespondenceStatus.Submitted)
+                        CorrespondenceFlowEndpoints.Notify(db, req.TenantId, c.AuthorId,
+                            status == CorrespondenceStatus.Rejected ? $"Rejected: {c.Number}" : $"Completed: {c.Number}",
+                            status == CorrespondenceStatus.Rejected ? $"{c.Subject} was rejected: {req.Comment?.Trim()}" : $"{c.Subject} has been approved{(outcome.Closed ? " and closed" : "")}.");
                 }
             }
             else if (a.EntityType == nameof(Request))
@@ -611,8 +629,7 @@ public static class IntelligenceEndpoints
                 }
             }
             DomainEvents.Record(db, req.TenantId, "ApprovalDecided", "ApprovalDecided",
-                nameof(Approval), a.Id.ToString(), details: newStatus.ToString());
-            await WorkflowRunner.OnApprovalDecidedAsync(db, req.TenantId, a, req.Approve, ct);
+                nameof(Approval), a.Id.ToString(), actorId: actor, details: string.IsNullOrWhiteSpace(req.Comment) ? newStatus.ToString() : $"{newStatus}: {req.Comment.Trim()}");
             await db.SaveChangesAsync(ct);
             await scope.CommitAsync(ct);
             return Results.Ok(a);
@@ -627,6 +644,8 @@ public static class IntelligenceEndpoints
             var actor = await ActingPersonAsync(db, ctx, req.TenantId, ct);
             if (actor is null || (req.DecidedBy is { } claimed && claimed != actor) || a.AssigneeId != actor) return Results.Forbid();
             if (a.Status != ApprovalStatus.Pending) return Results.Conflict(new { error = $"Approval is already {a.Status}." });
+            var flowLetter = a.EntityType == nameof(Correspondence) && await WorkflowRunner.OwnsAsync(db, req.TenantId, a, ct);
+            if (flowLetter && (req.Comment?.Trim().Length ?? 0) < 3) return Results.BadRequest(new { error = "Say what must change (at least 3 characters)." });
             db.Entry(a).CurrentValues.SetValues(a with { Status = ApprovalStatus.Rejected, DecidedAt = DateTimeOffset.UtcNow, DecidedBy = actor, Comment = req.Comment });
 
             if (a.EntityType == nameof(Request))
@@ -637,8 +656,19 @@ public static class IntelligenceEndpoints
                     db.Entry(r).CurrentValues.SetValues(r with { Status = RequestStatus.ChangesRequested });
                 }
             }
+            else if (flowLetter)
+            {
+                // The letter goes back to its author with the reviewer's words; the run stops until the author resubmits.
+                await WorkflowRunner.OnApprovalReturnedAsync(db, req.TenantId, a, ct);
+                var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == a.EntityId, ct);
+                if (c != null)
+                {
+                    db.Entry(c).CurrentValues.SetValues(c with { Status = CorrespondenceStatus.Returned });
+                    CorrespondenceFlowEndpoints.Notify(db, req.TenantId, c.AuthorId, $"Returned for changes: {c.Number}", $"{c.Subject}: {req.Comment?.Trim()}");
+                }
+            }
 
-            DomainEvents.Record(db, req.TenantId, "ApprovalChangesRequested", "ApprovalChangesRequested", nameof(Approval), a.Id.ToString(), details: req.Comment ?? "Changes requested");
+            DomainEvents.Record(db, req.TenantId, "ApprovalChangesRequested", "ApprovalChangesRequested", nameof(Approval), a.Id.ToString(), actorId: actor, details: req.Comment ?? "Changes requested");
             await db.SaveChangesAsync(ct);
             await scope.CommitAsync(ct);
             return Results.Ok(a);

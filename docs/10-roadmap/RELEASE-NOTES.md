@@ -177,6 +177,14 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Data changes (additive only): new table `CorrespondenceTypes` (tenant-isolated); new nullable columns `TypeCode`, `TargetUnitId`, `Amount` on `Correspondences`; two new status values at the end of the list (`Returned`, `Closed`) that nothing uses yet.
 - **For the university to confirm before step 2:** the amount limits for financial correspondence at each level (provisional values will be set and are editable), who closes each type (the recipient, the author or records), and whether a letter returned for changes restarts the whole workflow (assumed) or resumes at the step that returned it.
 
+## Internal correspondence: workflows for every type (step 2 of 3)
+- Each of the nine types now follows its own workflow from creation to closure (`docs/05-processes/correspondence-workflows.md` lists sender, receiver, purpose, steps, deadlines and conditions). The standard workflows are created by `seed-defaults` and can be edited by the university (`new-version`).
+- New: return for changes (letter goes back to its author, who edits and resubmits), final rejection with a reason, withdrawal and closure with a reason, a full history of every letter, `mine` for each person's own letters, and in-app notifications to the author.
+- The workflow engine gained conditions (financial limits by amount), skipping a step whose approver is the sender or already approved, deadlines in **working days** with the holiday calendar (weekend `Workweek__WeekendDays`, default Friday,Saturday), a closing step, and addressing a step to the receiving unit's head or the letter's recipient. Existing workflows (requests and others) behave exactly as before; every existing test passes unchanged.
+- **Compatibility:** a letter without a type keeps the original path (one named reviewer, ends Approved). `reviewerId` on `submit` is now optional in the schema but still required for untyped letters. No migration in this step (new values are stored as text).
+- **For the university to confirm:** the financial limits (50,000 and 250,000 are placeholders), who closes each type, whether a returned letter restarts from the first step, and whether the student request type is switched on. The screens follow in step 3.
+- Not yet: the screens for all of this (step 3).
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

@@ -26,6 +26,12 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 - `GET /api/correspondence/register?tenantId=&year=&type=&status=&q=&skip=&take=` (`correspondence:read`; newest first, recipients included, no letter body; confidential letters only for `correspondence:confidential`)
 - `GET /api/correspondence/register/export?...&calendar=gregorian|hijri|both` (CSV, same filters)
 - `POST /api/correspondence/{id}/submit` (Draft→Submitted + approval + task + event)
+- **Typed letters follow their type's workflow** (see `docs/05-processes/correspondence-workflows.md`). `submit` on a typed letter is by its author only, needs no `reviewerId` (still required for an untyped letter) and answers `{correspondence, approvalId, instanceId, workflow}`; 422 names the missing approver; 409 if it is not a Draft.
+- `PATCH /api/correspondence/{id}` (author only; Draft or Returned; subject, content, priority, amount, targetUnitId), `POST /api/correspondence/{id}/resubmit` (author; Returned → new round), `POST /api/correspondence/{id}/close` (`{reason}`, 3+ characters; the author withdraws, `records:manage` closes any unfinished letter).
+- `GET /api/correspondence/mine?tenantId=` (the caller's own letters; the only list a student may read), `GET /api/correspondence/{id}/history?tenantId=` (events, every step with who decided and why, runs; author, assignees or `correspondence:read`).
+- `POST /api/approvals/{id}/decide`: rejecting a workflow letter needs `comment` (3+ characters); `POST /api/approvals/{id}/request-changes` on a workflow letter returns it to its author (comment required). Requests and untyped letters behave as before.
+- `POST /api/workflows/definitions/{id}/new-version` (`workflow:manage`; `{nodesJson, name?}`; raises `version`; validated). Workflow steps now accept `close`, `when` (`amount|priority|isConfidential` with `> >= < <= == !=`), `skipDuplicate`, `workingDays` with `slaDays`, `notify`, `label`, and `assigneeFrom` `target_head|target_dean|recipient`.
+- Letter status gains `Returned` and `Closed` (stored as text); `Correspondence` gains `typeCode`, `targetUnitId`, `amount`; workflow runs gain status `Returned` and `Closed`.
 - `GET /api/approvals?tenantId=&assigneeId=&status=` (`approval:read`)
 - `POST /api/approvals/{id}/decide` (`approval:decide`, assignee-only, 409 double-decide)
 - `POST /api/approvals/{id}/request-changes` (assignee-only → ChangesRequested, request returned for revision)
@@ -88,7 +94,9 @@ persistent delivery; relay `EventRelay` (2s poll, batch 50, marks `DispatchedAt`
 | RoleAssigned | POST /api/roles/assign | tenantId, personId, roleId, roleCode, scope | notifications, access cache |
 | RoleRevoked | POST /api/roles/revoke | tenantId, personId, roleCode | notifications, access cache |
 | CorrespondenceCreated | POST /api/correspondence | tenantId, correspondenceId, number | audit projector |
-| CorrespondenceSubmitted | POST /api/correspondence/{id}/submit | tenantId, correspondenceId, number, reviewerId, approvalId | notifications |
+| CorrespondenceSubmitted | POST /api/correspondence/{id}/submit | tenantId, correspondenceId, number, reviewerId, approvalId (typed letters: workflow instead of reviewerId) | notifications |
+| CorrespondenceEdited, CorrespondenceResubmitted, CorrespondenceClosed | PATCH /api/correspondence/{id}, /resubmit, /close | audit row | audit projector |
+| WorkflowReturned, WorkflowClosed, WorkflowStepSkipped, WorkflowDefinitionVersioned | approvals/request-changes, correspondence/close, workflow engine, new-version | tenantId, instanceId | audit projector |
 | ApprovalDecided | POST /api/approvals/{id}/decide | tenantId, approvalId, entityType, entityId, approved, decidedBy | notifications |
 | TaskCompleted | POST /api/tasks/{id}/complete | tenantId, taskId | analytics |
 | TaskBreached | SlaMonitor (1 min tick) | tenantId, taskId, title, assigneeId | notifications |

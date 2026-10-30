@@ -38,7 +38,8 @@ public sealed class WorkingCalendar(IReadOnlySet<DayOfWeek> weekend, TimeSpan ut
             date = date.AddDays(1);
             if (!weekend.Contains(date.DayOfWeek) && !holidays.Contains(date)) left--;
         }
-        return new DateTimeOffset(date.ToDateTime(TimeOnly.FromTimeSpan(local.TimeOfDay)), utcOffset);
+        // Stored times are UTC (the database accepts no other offset); the date is counted on the institution's clock.
+        return new DateTimeOffset(date.ToDateTime(TimeOnly.FromTimeSpan(local.TimeOfDay)), utcOffset).ToUniversalTime();
     }
 
     /// <summary>The holidays that could matter for a deadline of this many working days from now. Call inside a tenant scope.</summary>
