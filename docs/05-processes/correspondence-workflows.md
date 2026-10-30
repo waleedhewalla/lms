@@ -67,3 +67,6 @@ Roles the standard workflows look for (create them, or edit the workflows): `FIN
 4. The **student request** type is created switched off. Switch it on when student affairs is ready to receive them.
 5. College types: the system does not yet check that the sender and the receiving unit belong to the *same* college; the vice dean step is mandatory in `TO_DEAN` until the workflow is edited.
 6. Step names, deadlines and the role codes above are the proposed defaults.
+
+## On screen
+Correspondence page: **+ New letter** → choose the type → receiving unit / amount if asked → save as draft → **Send**. Open a letter in the register to see its path and history. A returned letter shows the reviewer's note; **Edit**, then **Send again**. **Withdraw** (author) and **Close** (records) ask for a reason. A student sees **My letters** only.

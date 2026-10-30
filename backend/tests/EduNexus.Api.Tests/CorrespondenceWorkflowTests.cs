@@ -311,6 +311,10 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
         Assert.Equal(HttpStatusCode.Forbidden, (await student.GetAsync($"/api/correspondence?tenantId={w.Tenant}")).StatusCode);                    // no general read
         Assert.Equal(HttpStatusCode.NotFound, (await student.GetAsync($"/api/correspondence/{staffLetter}/history?tenantId={w.Tenant}")).StatusCode);   // not their letter
         Assert.Equal(HttpStatusCode.OK, (await student.GetAsync($"/api/correspondence/{mine}/history?tenantId={w.Tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await student.GetAsync($"/api/correspondence/{mine}?tenantId={w.Tenant}")).StatusCode);                         // their own letter, in full
+        Assert.Equal(HttpStatusCode.Forbidden, (await student.GetAsync($"/api/correspondence/{staffLetter}?tenantId={w.Tenant}")).StatusCode);          // someone else's
+        Assert.Equal(HttpStatusCode.OK, (await student.GetAsync($"/api/correspondence/units?tenantId={w.Tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await As(w.Tenant, ["person:read"]).GetAsync($"/api/correspondence/units?tenantId={w.Tenant}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await student.PostAsJsonAsync($"/api/correspondence/{staffLetter}/submit", new { tenantId = w.Tenant })).StatusCode);   // not theirs to send
     }
 

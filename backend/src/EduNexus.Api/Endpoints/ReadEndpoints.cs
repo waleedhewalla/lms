@@ -55,11 +55,14 @@ public static class ReadEndpoints
         // --- Correspondence ---
         app.MapGet("/api/correspondence/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, Guid tenantId, CancellationToken ct) =>
         {
-            if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
             var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
-            if (c is null || (c.IsConfidential && !ctx.User.HasPermission("correspondence:confidential")))
+            // A reader sees what the general permission allows; anyone else sees only the letters they wrote (a student's own request).
+            var canRead = ctx.User.HasPermission("correspondence:read");
+            var isAuthor = c is not null && await ActingPersonAsync(db, ctx, tenantId, ct) == c.AuthorId;
+            if (!canRead && !isAuthor) return Results.Forbid();
+            if (c is null || (!isAuthor && c.IsConfidential && !ctx.User.HasPermission("correspondence:confidential")))
                 return Results.NotFound(new { error = "Correspondence not found." });
             var correspondents = await db.Correspondents.Where(x => x.TenantId == tenantId && x.CorrespondenceId == id).ToListAsync(ct);
             var approvals = await db.Approvals.Where(a => a.TenantId == tenantId && a.EntityType == nameof(Correspondence) && a.EntityId == id)

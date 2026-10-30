@@ -33,7 +33,7 @@ export const MODULES: Module[] = [
     en: ["Tasks", "Assigned work, evidence and verification."], ar: ["المهام", "الأعمال المسندة والشواهد والتحقق."] },
   { href: "/approvals", icon: "check", tone: "green", group: "work", perms: ["approval:read", "approval:decide"],
     en: ["Approvals", "Review and decide multi-stage approvals."], ar: ["الموافقات", "مراجعة الموافقات متعددة المراحل والبت فيها."] },
-  { href: "/correspondence", icon: "mail", tone: "blue", group: "work", perms: ["correspondence:read"],
+  { href: "/correspondence", icon: "mail", tone: "blue", group: "work", perms: ["correspondence:read", "correspondence:student-request"],
     en: ["Correspondence", "Incoming, outgoing and internal letters."], ar: ["المراسلات", "المراسلات الواردة والصادرة والداخلية."] },
   { href: "/calendar", icon: "calendar", tone: "violet", group: "work", perms: ["calendar:read"],
     en: ["Calendar", "Meetings, deadlines and reviews, with Hijri dates."], ar: ["التقويم", "الاجتماعات والمواعيد والمراجعات بالتاريخ الهجري."] },
