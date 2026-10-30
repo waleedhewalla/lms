@@ -25,15 +25,25 @@ test("every file the service worker precaches exists", () => {
   for (const f of files) assert.ok(existsSync(join(root, "public", f)), `${f} is missing`);
 });
 
-test("service worker never stores pages or API data, and leaves other origins alone", () => {
-  // Only the offline page, icons and hashed build assets are ever put into a cache.
-  assert.equal([...sw.matchAll(/cache\.put\(/g)].length, 1);
+test("service worker stores only the offline page, icons, hashed assets, runtime settings and the two listed page shells", () => {
+  // Every write to a cache, and what each one is allowed to hold.
+  assert.equal([...sw.matchAll(/\.put\(/g)].length, 3);
+  assert.match(sw, /const OFFLINE_PAGES = \["\/my-work", "\/dashboard"\];/);
+  assert.match(sw, /const keep = OFFLINE_PAGES\.includes\(url\.pathname\) && !url\.search;/);
   assert.match(sw, /\/_next\/static\//);
+  // Other origins (the API, the identity provider) and anything but GET are never touched.
   assert.match(sw, /url\.origin !== self\.location\.origin\) return/);
   assert.match(sw, /req\.method !== "GET"\) return/);
-  // Navigations go to the network first; the offline page is only a fallback.
-  assert.match(sw, /fetch\(req\)\.catch\(\(\) => caches\.match\(OFFLINE_URL\)\)/);
+  // Pages go to the network first; the saved copy is only a fallback.
+  assert.match(sw, /fetch\(req\)\.then/);
   assert.doesNotMatch(sw, /localStorage|Authorization|\/api\//);
+});
+
+test("the built pages the worker may keep carry no personal data", { skip: !existsSync(join(root, ".next", "server", "app", "my-work.html")) }, () => {
+  for (const page of ["my-work", "dashboard"]) {
+    const html = readFileSync(join(root, ".next", "server", "app", `${page}.html`), "utf8");
+    assert.doesNotMatch(html, /edunexus\.token|Bearer |eyJ[A-Za-z0-9_-]{10,}|person_id|tenant_id/i, `${page}.html must be a plain shell`);
+  }
 });
 
 test("the offline page is self-contained (no scripts or assets that would also be offline)", () => {

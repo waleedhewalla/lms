@@ -9,6 +9,8 @@ export function GET() {
     oidcClientId: process.env.EDUNEXUS_OIDC_CLIENT_ID || "edunexus-web",
     oidcScope: process.env.EDUNEXUS_OIDC_SCOPE || "openid profile email",
     // Operations dashboard link in the header; hidden when unset.
+    // Keep a small copy of My Work on the device and queue actions taken offline. Off unless the deployment opts in.
+    offlineData: process.env.EDUNEXUS_OFFLINE_DATA === "true",
     grafanaUrl: process.env.EDUNEXUS_GRAFANA_URL ?? (process.env.NODE_ENV === "production" ? "" : "http://localhost:3021"),
   };
   return new Response(`window.__EDUNEXUS__=${JSON.stringify(config)};`, {

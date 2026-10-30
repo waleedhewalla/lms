@@ -1,4 +1,4 @@
-export type RuntimeConfig = { apiBase: string; oidcAuthority: string; oidcClientId: string; oidcScope: string; grafanaUrl: string };
+export type RuntimeConfig = { apiBase: string; oidcAuthority: string; oidcClientId: string; oidcScope: string; grafanaUrl: string; offlineData: boolean };
 
 declare global {
   interface Window { __EDUNEXUS__?: Partial<RuntimeConfig> }
@@ -10,6 +10,7 @@ const DEFAULTS: RuntimeConfig = {
   oidcClientId: "edunexus-web",
   oidcScope: "openid profile email",
   grafanaUrl: "",
+  offlineData: false,
 };
 
 /** Config injected by /runtime-config.js (see app/runtime-config.js/route.ts), falling back to build-time defaults. */

@@ -1,6 +1,8 @@
 // OpenID Connect Authorization Code flow with PKCE for a public browser client. No client secret,
 // no third-party library: discovery → authorize redirect → code exchange at the token endpoint.
 import { config } from "./config";
+import { browserStorage, purgeAll, purgeIfOtherPerson } from "./offlineStore";
+import { personIdOf } from "./modules";
 
 const TOKEN_KEY = "edunexus.token";
 const ID_TOKEN_KEY = "edunexus.idToken";
@@ -60,12 +62,16 @@ export async function completeSignIn(search: string): Promise<string> {
   if (tokens.id_token) localStorage.setItem(ID_TOKEN_KEY, tokens.id_token);
   const tenant = claims()?.tenant_id;
   if (typeof tenant === "string") localStorage.setItem("edunexus.tenant", tenant);
+  // A different person on the same device never inherits the previous person's offline copy or queued actions.
+  await purgeIfOtherPerson(browserStorage(), personIdOf(claims())).catch((e) => console.error("Could not check the offline copy", e));
   // Same-origin paths only: "//host" and "/\\host" would be treated as other origins by the browser.
   const safe = /^\/(?![\/\\])/.test(pending.returnTo);
   return safe ? pending.returnTo : "/my-work";
 }
 
 export async function signOut(): Promise<void> {
+  // The offline copy and any queued actions belong to the person who is leaving: they go before anything else.
+  await purgeAll(browserStorage()).catch((e) => console.error("Could not clear the offline copy", e));
   const idToken = localStorage.getItem(ID_TOKEN_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ID_TOKEN_KEY);
@@ -77,15 +83,18 @@ export async function signOut(): Promise<void> {
   window.location.assign(`${d.end_session_endpoint}?${q}`);
 }
 
-/** Decoded payload of the stored access token (display only — the API validates the signature). */
-export function claims(): Record<string, unknown> | null {
+/**
+ * Decoded payload of the stored access token (display only — the API validates the signature). An expired token reads as
+ * signed out, except when `ignoreExpiry` is set: that is only for opening the offline copy of My Work.
+ */
+export function claims(opts?: { ignoreExpiry?: boolean }): Record<string, unknown> | null {
   try {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) return null;
     const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     const json = decodeURIComponent(atob(part).split("").map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join(""));
     const payload = JSON.parse(json) as Record<string, unknown>;
-    if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) return null;
+    if (!opts?.ignoreExpiry && typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) return null;
     return payload;
   } catch {
     return null;

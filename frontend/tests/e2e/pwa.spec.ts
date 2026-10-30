@@ -21,7 +21,7 @@ test('installable shell: manifest is served and the offline page appears when th
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Governance, quality and daily work');
 });
 
-test('the service worker stores nothing but the offline page, icons and hashed build assets', async ({ page }) => {
+test('the service worker stores nothing but the offline page, icons, hashed build assets, runtime settings and two page shells', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
@@ -32,5 +32,5 @@ test('the service worker stores nothing but the offline page, icons and hashed b
     return urls;
   });
   expect(cached.length).toBeGreaterThan(0);
-  for (const p of cached) expect(p).toMatch(/^\/(offline\.html|icons\/|_next\/static\/)/);
+  for (const p of cached) expect(p).toMatch(/^\/(offline\.html|icons\/|_next\/static\/|runtime-config\.js$|my-work$|dashboard$)/);
 });

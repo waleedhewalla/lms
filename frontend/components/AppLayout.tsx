@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { config } from "../lib/config";
 import { canOpen, GROUPS, moduleFor, MODULES } from "../lib/modules";
 import { signOut } from "../lib/oidc";
+import { OFFLINE_PATH, offlineSession, type OfflineSession } from "../lib/offlineSession";
 import { BrandMark, LandingIcon } from "./LandingIcon";
 import { OPEN_PATHS, PUBLIC_PATHS, PublicFooter, PublicHeader, useSession } from "./PublicChrome";
 import { useTranslation } from "./TranslationProvider";
@@ -16,9 +17,20 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => setGrafanaUrl(config().grafanaUrl), []);
   const pathname = usePathname();
   const router = useRouter();
-  const session = useSession();
+  const signedIn = useSession();
   const isPublic = PUBLIC_PATHS.includes(pathname);
   const isOpen = OPEN_PATHS.includes(pathname);
+
+  // Offline, My Work may open from the device's copy even though the short-lived token has expired (see lib/offlineSession.ts).
+  const [offline, setOffline] = useState<OfflineSession | null | undefined>(undefined);
+  useEffect(() => {
+    if (signedIn !== null || pathname !== OFFLINE_PATH) return;
+    let live = true;
+    offlineSession().then((s) => { if (live) setOffline(s); }).catch((e) => { console.error("Offline session check failed", e); if (live) setOffline(null); });
+    return () => { live = false; };
+  }, [signedIn, pathname]);
+  // While the check runs `offline` is undefined, which reads as "still loading", so the guard below does not redirect early.
+  const session = signedIn !== null ? signedIn : pathname !== OFFLINE_PATH ? null : offline;
 
   // The workspace is for signed-in people only: anyone else goes to sign-in and comes back here afterwards.
   useEffect(() => {
