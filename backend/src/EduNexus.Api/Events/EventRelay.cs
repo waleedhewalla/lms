@@ -15,7 +15,8 @@ namespace EduNexus.Api.Events;
 public sealed class EventRelay(
     IServiceScopeFactory scopes,
     IOptions<RabbitMqOptions> options,
-    ILogger<EventRelay> log) : BackgroundService
+    ILogger<EventRelay> log,
+    Tls.PrivateCa? ca = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -33,7 +34,7 @@ public sealed class EventRelay(
                     .ToListAsync(stoppingToken);
                 if (batch.Count > 0)
                 {
-                    await PublishBatchAsync(cfg, batch, stoppingToken);
+                    await PublishBatchAsync(cfg, ca, batch, stoppingToken);
                     var at = DateTimeOffset.UtcNow;
                     foreach (var e in batch) e.DispatchedAt = at;
                     // OutboxEvents is platform-level (no RLS): no tenant scope needed.
@@ -49,16 +50,9 @@ public sealed class EventRelay(
         }
     }
 
-    private static async Task PublishBatchAsync(RabbitMqOptions cfg, List<Foundation.OutboxEvent> batch, CancellationToken ct)
+    private static async Task PublishBatchAsync(RabbitMqOptions cfg, Tls.PrivateCa? ca, List<Foundation.OutboxEvent> batch, CancellationToken ct)
     {
-        var factory = new ConnectionFactory
-        {
-            HostName = cfg.Host,
-            Port = cfg.Port,
-            UserName = cfg.Username,
-            Password = cfg.Password,
-            AutomaticRecoveryEnabled = true,
-        };
+        var factory = RabbitMqConnection.Factory(cfg, ca);
         await using var connection = await factory.CreateConnectionAsync(ct);
         await using var channel = await connection.CreateChannelAsync(cancellationToken: ct);
         await channel.ExchangeDeclareAsync(cfg.Exchange, ExchangeType.Topic, durable: true, cancellationToken: ct);

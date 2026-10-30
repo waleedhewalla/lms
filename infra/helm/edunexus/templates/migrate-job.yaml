@@ -9,8 +9,17 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   template:
+    metadata:
+      labels: { app: edunexus-migrate }
     spec:
       restartPolicy: Never
+      {{- if .Values.tls.enabled }}
+      volumes:
+        - name: tls-ca
+          secret:
+            secretName: edunexus-tls-api
+            items: [{ key: ca.crt, path: ca.crt }]
+      {{- end }}
       containers:
         - name: migrate
           image: "{{ .Values.registry }}{{ .Values.api.image }}"
@@ -19,3 +28,8 @@ spec:
             - { name: ASPNETCORE_ENVIRONMENT, value: {{ .Values.api.env.ASPNETCORE_ENVIRONMENT | quote }} }
             - name: EDUNEXUS_CONNECTION
               valueFrom: { secretKeyRef: { name: {{ .Values.api.secretName }}, key: connection } }
+            {{- if .Values.tls.enabled }}
+            - { name: Tls__CaFile, value: /etc/edunexus/tls/ca.crt }
+          volumeMounts:
+            - { name: tls-ca, mountPath: /etc/edunexus/tls, readOnly: true }
+            {{- end }}

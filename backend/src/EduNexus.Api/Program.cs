@@ -44,9 +44,14 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
 builder.Services.AddEdgeProtection(builder.Configuration);
 builder.Services.AddHealthChecks();
 
+// In-cluster TLS: with Tls:CaFile set, every service connection below is verified against the site's own CA.
+var privateCa = EduNexus.Api.Tls.PrivateCa.From(builder.Configuration);
+if (privateCa is not null) builder.Services.AddSingleton(privateCa);
+
 var conn = Environment.GetEnvironmentVariable("EDUNEXUS_CONNECTION")
     ?? builder.Configuration.GetConnectionString("Foundation")
     ?? "Host=localhost;Port=5433;Database=edunexus;Username=edunexus;Password=edunexus";
+if (privateCa is not null) conn = privateCa.ApplyTo(conn);
 builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(conn));
 
 // --- Auth: OIDC when Authority configured, else dev HS256 (R1 slice) ---
@@ -63,7 +68,10 @@ builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(Stor
 builder.Services.AddSingleton(sp =>
 {
     var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<StorageOptions>>().Value;
-    return new MinioClient().WithEndpoint(o.Endpoint).WithCredentials(o.AccessKey, o.SecretKey).WithSSL(o.Secure).Build();
+    var minio = new MinioClient().WithEndpoint(o.Endpoint).WithCredentials(o.AccessKey, o.SecretKey).WithSSL(o.Secure);
+    // The SDK would otherwise check MinIO's certificate against the system roots, which do not include the site CA.
+    if (o.Secure && sp.GetService<EduNexus.Api.Tls.PrivateCa>() is { } ca) minio = minio.WithHttpClient(new HttpClient(ca.CreateHandler()));
+    return minio.Build();
 });
 builder.Services.AddSingleton(sp =>
 {
@@ -71,7 +79,8 @@ builder.Services.AddSingleton(sp =>
     var c = sp.GetRequiredService<IMinioClient>();
     // Independent signed requests prove what the SDK claims (see ObjectStorage). Pooled connections are recycled so a
     // moved service address is picked up.
-    var probe = new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(15) };
+    var ca = o.Secure ? sp.GetService<EduNexus.Api.Tls.PrivateCa>() : null;
+    var probe = new HttpClient(ca?.CreateHandler() ?? new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(15) };
     return new ObjectStorage(c, o, probe);
 });
 builder.Services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<ObjectStorage>());
@@ -79,6 +88,16 @@ builder.Services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<Object
 // --- AI (R5): tenant retrieval index + copilot + webhook fan-out ---
 builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.Section));
 builder.Services.AddHttpClient("ai").SetHandlerLifetime(TimeSpan.FromMinutes(5));
+// OpenSearch has its own client: the site CA must apply to it and not to the (public) LLM endpoint behind "ai".
+builder.Services.AddHttpClient("opensearch")
+    .ConfigurePrimaryHttpMessageHandler(sp => (HttpMessageHandler?)sp.GetService<EduNexus.Api.Tls.PrivateCa>()?.CreateHandler() ?? new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+    .ConfigureHttpClient((sp, c) =>
+    {
+        var ai = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiOptions>>().Value;
+        if (!string.IsNullOrEmpty(ai.OpenSearchUser))
+            c.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
+                Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{ai.OpenSearchUser}:{ai.OpenSearchPassword}")));
+    });
 var allowPrivateTargets = builder.Configuration.GetValue<bool>(EduNexus.Api.Integrations.OutboundUrlGuard.AllowPrivateKey);
 builder.Services.AddHttpClient("integrations")
     .ConfigurePrimaryHttpMessageHandler(() => EduNexus.Api.Integrations.OutboundUrlGuard.CreateHandler(allowPrivateTargets))
@@ -86,7 +105,7 @@ builder.Services.AddHttpClient("integrations")
 builder.Services.AddSingleton(sp =>
 {
     var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiOptions>>().Value;
-    var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("ai");
+    var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("opensearch");
     return new TenantSearchIndex(http, o);
 });
 builder.Services.AddSingleton(sp => new TextGenerator(

@@ -1,0 +1,24 @@
+{{- if .Values.networkPolicy.enabled }}
+# Data services accept connections only from the API and the migration job. Everything else in the cluster is refused.
+{{- $ns := .Values.namespace }}
+{{- range $svc := list "postgres" "redis" "rabbitmq" "minio" "opensearch" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edunexus-{{ $svc }}-from-api
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels: { app: edunexus-{{ $svc }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: edunexus-api }
+        {{- if eq $svc "postgres" }}
+        - podSelector:
+            matchLabels: { app: edunexus-migrate }
+        {{- end }}
+---
+{{- end }}
+{{- end }}

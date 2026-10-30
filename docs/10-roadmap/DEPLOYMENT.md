@@ -41,6 +41,9 @@ Other IdPs: create a **public** client for the web app:
 | `ForwardedHeaders__KnownNetworks__0..n` | CIDRs of proxies whose `X-Forwarded-For` is trusted; default loopback + private ranges |
 | `Metrics__AllowExternal` | `/metrics` is served only to loopback/private callers unless `true` |
 | `RabbitMQ__Host/Port/Username/Password` | message broker |
+| `RabbitMQ__Tls`, `RabbitMQ__TlsServerName` | connect to the broker over TLS (port 5671 on the chart); the certificate must carry `TlsServerName`, default `RabbitMQ__Host`. Checked against `Tls__CaFile` when set |
+| `Tls__CaFile` | path of the site CA certificate (PEM). When set, the API checks the certificates of Postgres (`SSL Mode=VerifyFull`, unless the connection string chooses otherwise), RabbitMQ, MinIO (`Storage__Secure=true`), OpenSearch (https URL) and Redis (`ssl=true`) against that CA and the host name, and ignores the system roots for them. The Helm chart sets it with `tls.enabled`. Unset: nothing changes |
+| `AI__OpenSearchUser`, `AI__OpenSearchPassword` | basic-auth login for an OpenSearch you secure yourself (optional; the chart's OpenSearch uses no login) |
 | `Storage__Endpoint/AccessKey/SecretKey/Bucket/Secure` | S3-compatible object storage |
 | `AI__OpenSearchUrl` | search / RAG index |
 | `AI__Provider`, `AI__BaseUrl`, `AI__Model`, `AI__ApiKey` | `Echo` (default, no external calls) or `OpenAI` (any OpenAI-compatible endpoint, e.g. on-prem inference) |
@@ -90,6 +93,25 @@ ingress:
 ```
 
 The pre-install/pre-upgrade hook runs migrations before new API pods start.
+
+## 3c. Encryption inside the cluster (optional)
+
+Off by default. Turn it on before real data goes in:
+
+```yaml
+tls:
+  enabled: true
+  mode: certManager        # or existingSecret
+networkPolicy:
+  enabled: true            # optional: only the API and migration job may reach the data services
+```
+
+- **`certManager`**: needs cert-manager. The chart creates a CA and one certificate per service (renewed automatically, 90 days with renewal 15 days before). To sign with your own issuer instead, set `tls.issuerRef` (for example `{ name: corp-ca, kind: ClusterIssuer }`); the issuer must return its CA certificate as `ca.crt` in the Secret.
+- **`existingSecret`**: for air-gapped sites or your own CA. Create `edunexus-tls-postgres`, `-redis`, `-rabbitmq`, `-minio`, `-opensearch` (each with `tls.crt`, `tls.key`, `ca.crt`) and `edunexus-tls-api` (only `ca.crt`). `infra/tls/gen-certs.sh` makes a CA and all of them and prints the `kubectl create secret` commands. Certificates must name `edunexus-<service>` (also with `.<namespace>`, `.svc` and `.svc.cluster.local`). To renew, replace the Secrets and restart the workloads.
+- **What changes:** Postgres accepts only TLS from the network (`pg_hba` `hostssl`); Redis has no plaintext port; RabbitMQ listens on 5671 and 15671 only; MinIO serves https; OpenSearch sits behind a TLS proxy and listens on loopback only. The API and the migration job get the CA (never a key) and verify every connection against it and the service name; a wrong CA or name fails the connection instead of falling back.
+- **Your Postgres connection secret** (`edunexus-api`, key `connection`) must use the host `edunexus-postgres`, which the certificate names. The API adds `SSL Mode=VerifyFull` and the CA itself.
+- **Switching an existing install:** the data services restart with TLS, and API pods restart with the new settings; plan a short maintenance window. Rotating certificates restarts nothing by itself: the services read new files on their next restart.
+- **Not covered:** the ingress to web and API hop and the identity provider (yours to secure); client certificates (servers prove who they are, clients still use passwords); OpenSearch's own security plugin (it is protected by network position and the TLS proxy; use `networkPolicy.enabled` too).
 
 ## 4. First tenant
 

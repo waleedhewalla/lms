@@ -72,6 +72,49 @@ jobs:
         env:
           EDUNEXUS_CONNECTION: Host=localhost;Port=5433;Database=edunexus_test;Username=edunexus;Password=edunexus
 
+  # The real clients against real servers that speak TLS with a private CA (Postgres, Redis): the handshake must succeed
+  # with the site CA, fail with any other CA, and plaintext must be refused. RabbitMQ, MinIO and OpenSearch use the same
+  # trust code, covered by PrivateCaTests (a real TLS listener) and the chart render checks above.
+  tls-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '${{ env.DOTNET_VERSION }}' }
+      - name: Private CA and TLS-only Postgres and Redis
+        run: |
+          d="$RUNNER_TEMP/tls"; mkdir -p "$d"; cd "$d"
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt -days 2 -subj "/CN=edunexus-ci-ca"
+          printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > ext.cnf
+          for n in pg redis; do
+            openssl req -newkey rsa:2048 -nodes -keyout $n.key -out $n.csr -subj "/CN=localhost"
+            openssl x509 -req -in $n.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out $n.crt -days 2 -extfile ext.cnf
+          done
+          printf 'local all all trust\nhostssl all all all trust\n' > pg_hba.conf
+          chmod 644 *.crt pg_hba.conf redis.key
+          sudo chown 999:999 pg.key pg.crt pg_hba.conf && sudo chmod 600 pg.key
+          docker run -d --name pgtls -e POSTGRES_HOST_AUTH_METHOD=trust -p 5434:5432 -v "$d:/tls:ro" postgres:16 \
+            postgres -c ssl=on -c ssl_cert_file=/tls/pg.crt -c ssl_key_file=/tls/pg.key -c hba_file=/tls/pg_hba.conf
+          docker run -d --name redistls -p 6391:6379 -v "$d:/tls:ro" redis:7 \
+            redis-server --port 0 --tls-port 6379 --tls-cert-file /tls/redis.crt --tls-key-file /tls/redis.key \
+            --tls-ca-cert-file /tls/ca.crt --tls-auth-clients no
+          for i in $(seq 1 30); do
+            docker exec pgtls pg_isready -U postgres >/dev/null 2>&1 && docker exec redistls redis-cli --tls --cacert /tls/ca.crt ping 2>/dev/null | grep -q PONG && break
+            sleep 2
+          done
+          echo "TLS_DIR=$d" >> "$GITHUB_ENV"
+      - run: dotnet build backend/EduNexus.sln --nologo -v minimal
+      - name: TLS tests (a skipped or unconfigured test fails here)
+        run: dotnet test backend/EduNexus.sln --no-build --nologo -v minimal --filter "Category=Tls"
+        env:
+          EDUNEXUS_REQUIRE_TLS_TESTS: 'true'
+          EDUNEXUS_TEST_TLS_CA: ${{ env.TLS_DIR }}/ca.crt
+          EDUNEXUS_TEST_TLS_PG: Host=127.0.0.1;Port=5434;Username=postgres;Database=postgres
+          EDUNEXUS_TEST_TLS_REDIS: 127.0.0.1:6391
+      - name: Servers log
+        if: failure()
+        run: docker logs pgtls; docker logs redistls
+
   ef-dryrun:
     runs-on: ubuntu-latest
     steps:
@@ -116,6 +159,24 @@ jobs:
           grep -q 'RateLimiting__Redis__ConnectionString' /tmp/default.yaml
           helm template edunexus infra/helm/edunexus --set api.rateLimiting.redis="" > /tmp/no-redis-limit.yaml
           ! grep -q 'RateLimiting__Redis__ConnectionString' /tmp/no-redis-limit.yaml
+      - name: In-cluster TLS renders with no plaintext path (cert-manager mode, supplied-Secrets mode, default unchanged)
+        run: |
+          pip install pyyaml
+          helm template edunexus infra/helm/edunexus --set tls.enabled=true > /tmp/tls-cm.yaml
+          python infra/ci/check-tls-render.py /tmp/tls-cm.yaml certManager
+          grep -q 'kind: Certificate' /tmp/tls-cm.yaml
+          helm template edunexus infra/helm/edunexus --set tls.enabled=true --set tls.mode=existingSecret > /tmp/tls-existing.yaml
+          python infra/ci/check-tls-render.py /tmp/tls-existing.yaml existingSecret
+          helm template edunexus infra/helm/edunexus --set tls.enabled=true --set 'tls.issuerRef.name=corp-ca' --set 'tls.issuerRef.kind=ClusterIssuer' > /tmp/tls-issuer.yaml
+          grep -q 'name: corp-ca' /tmp/tls-issuer.yaml
+          ! grep -q 'name: edunexus-selfsigned' /tmp/tls-issuer.yaml
+          ! helm template edunexus infra/helm/edunexus --set tls.enabled=true --set tls.mode=bogus > /dev/null 2>&1
+          # Off by default: nothing about TLS leaks into a normal install.
+          ! grep -Eq 'edunexus-tls-|Tls__CaFile|RabbitMQ__Tls|kind: Certificate|ssl=on' /tmp/default.yaml
+          grep -q 'RabbitMQ__Port, value: "5672"' /tmp/default.yaml
+          helm template edunexus infra/helm/edunexus --set networkPolicy.enabled=true > /tmp/netpol.yaml
+          test "$(grep -c 'kind: NetworkPolicy' /tmp/netpol.yaml)" = 5
+          ! grep -q 'kind: NetworkPolicy' /tmp/default.yaml
       - name: Keycloak realm import issues the claims the API expects
         run: |
           docker run -d --name kc -p 8081:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
