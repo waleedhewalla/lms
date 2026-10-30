@@ -69,8 +69,12 @@ builder.Services.AddSingleton(sp =>
 {
     var o = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<StorageOptions>>().Value;
     var c = sp.GetRequiredService<IMinioClient>();
-    return new ObjectStorage(c, o);
+    // Independent signed requests prove what the SDK claims (see ObjectStorage). Pooled connections are recycled so a
+    // moved service address is picked up.
+    var probe = new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(15) };
+    return new ObjectStorage(c, o, probe);
 });
+builder.Services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<ObjectStorage>());
 
 // --- AI (R5): tenant retrieval index + copilot + webhook fan-out ---
 builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.Section));

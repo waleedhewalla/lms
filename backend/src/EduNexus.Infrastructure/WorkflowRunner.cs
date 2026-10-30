@@ -170,7 +170,7 @@ public static class WorkflowRunner
                 if (ctx.RootElement.TryGetProperty("submitterId", out var s) && Guid.TryParse(s.GetString(), out var parsedSid))
                     sid = parsedSid;
             }
-            catch { }
+            catch (JsonException) { /* malformed context: fall back to the starter below */ }
 
             if (sid == Guid.Empty) sid = fallback;
 

@@ -4,9 +4,11 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using EduNexus.Api.Auth;
+using EduNexus.Api.Storage;
 using EduNexus.Infrastructure;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace EduNexus.Api.Endpoints;
@@ -47,6 +49,43 @@ public static class EndpointHelpers
         var matches = await db.People.Where(p => p.TenantId == tenantId && p.Email != null && p.Email.ToLower() == normalized)
             .Select(p => p.Id).Take(2).ToListAsync(ct);
         return matches.Count == 1 ? matches[0] : null;
+    }
+
+    public static IResult StorageUnavailable() =>
+        Results.Json(new { error = "File storage is unavailable. Try again shortly." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    /// <summary>
+    /// A client says it uploaded a file: look in storage before recording it. Null means it is there (and, when a size was
+    /// declared, matches); otherwise the response to return: 422 when it is missing or the wrong size, 503 when storage
+    /// cannot say. Call this before opening a database transaction, since it waits on the network.
+    /// </summary>
+    public static async Task<IResult?> RequireStoredObjectAsync(IObjectStorage storage, ILoggerFactory logs, string objectKey, long? declaredSize, CancellationToken ct)
+    {
+        try
+        {
+            var found = await storage.StatAsync(objectKey, ct);
+            if (found is null)
+                return Results.Json(new { error = "The file is not in storage. Upload it with the upload URL first." }, statusCode: StatusCodes.Status422UnprocessableEntity);
+            if (declaredSize is { } want && found.Size is { } got && got != want)
+                return Results.Json(new { error = $"The stored file is {got} bytes but {want} were declared." }, statusCode: StatusCodes.Status422UnprocessableEntity);
+            return null;
+        }
+        catch (StorageUnavailableException ex)
+        {
+            logs.CreateLogger("Storage").LogError(ex, "Object storage could not verify {ObjectKey}", objectKey);
+            return StorageUnavailable();
+        }
+    }
+
+    /// <summary>The leaf of a client-supplied file name, safe inside an object key; null if nothing usable is left.</summary>
+    public static string? SafeFileName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var leaf = name.Replace('\\', '/').Split('/')[^1];
+        var cleaned = new string(leaf.Where(c => !char.IsControl(c)).Select(c => "\"<>|?*#%:".Contains(c) ? '_' : c).ToArray())
+            .Replace("..", "_").Trim().Trim('.');
+        if (cleaned.Length > 120) cleaned = cleaned[^120..];   // keep the end: that is where the extension is
+        return cleaned.Length == 0 ? null : cleaned;
     }
 
     /// <summary>The caller's subject (token "sub"), used to record who did something and for segregation of duties.</summary>

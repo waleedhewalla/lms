@@ -2,7 +2,9 @@ using EduNexus.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using EduNexus.Api.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace EduNexus.Api.Tests;
 
@@ -15,6 +17,9 @@ public sealed class EduNexusFactory : WebApplicationFactory<Program>
     public const string TestConnection =
         "Host=localhost;Port=5433;Database=edunexus_test;Username=edunexus;Password=edunexus";
 
+    /// <summary>The storage every test talks to: an in-memory fake, so no test depends on a MinIO server.</summary>
+    public FakeObjectStorage Storage { get; } = new();
+
     public EduNexusFactory()
     {
         Environment.SetEnvironmentVariable("EDUNEXUS_CONNECTION", TestConnection);
@@ -25,6 +30,11 @@ public sealed class EduNexusFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        builder.ConfigureServices(s =>
+        {
+            s.RemoveAll<IObjectStorage>();
+            s.AddSingleton<IObjectStorage>(Storage);
+        });
         // The suite fires bursts of calls as one test identity; dedicated tests cover the limiter with low limits.
         builder.UseSetting("RateLimiting:PermitsPerMinute", "100000");
         builder.UseSetting("RateLimiting:ExpensivePermitsPerMinute", "100000");
