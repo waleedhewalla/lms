@@ -403,6 +403,13 @@ public sealed record CalendarEvent(
     Guid Id, Guid TenantId, string Title, CalendarEventKind Kind, DateTimeOffset StartsAt, DateTimeOffset EndsAt,
     string? Location, string? SourceType, Guid? SourceId, Guid? OwnerId, DateTimeOffset CreatedAt);
 
+/// <summary>
+/// A personal calendar subscription link. The link itself is a secret (anyone holding it can read that person's calendar),
+/// so only its SHA-256 is stored, it expires, and it can be revoked.
+/// </summary>
+public sealed record CalendarFeedToken(Guid Id, Guid TenantId, Guid PersonId, string TokenHash, DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiresAt, DateTimeOffset? LastUsedAt = null, DateTimeOffset? RevokedAt = null);
+
 public enum MinutesStatus { Draft, Submitted, Approved }
 
 /// <summary>Versioned meeting minutes (BBP §8.14): each save is a new version; one version gets approved.</summary>

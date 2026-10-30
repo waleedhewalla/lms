@@ -197,6 +197,7 @@ app.MapReadEndpoints();
 app.MapWorkEndpoints();
 app.MapReportEndpoints();
 app.MapGovernanceDepthEndpoints();
+app.MapCalendarFeedEndpoints();
 app.MapAiGovernanceEndpoints();
 app.MapRecordsEndpoints();
 app.MapPrivacyEndpoints();

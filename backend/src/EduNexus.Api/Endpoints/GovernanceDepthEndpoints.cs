@@ -162,12 +162,13 @@ public static class GovernanceDepthEndpoints
         return items.OrderBy(i => i.StartsAt).ToList();
     }
 
-    internal static string ToIcs(IEnumerable<CalendarItem> items)
+    internal static string ToIcs(IEnumerable<CalendarItem> items, string? name = null)
     {
         static string Utc(DateTimeOffset d) => d.UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
         static string Esc(string s) => s.Replace("\\", "\\\\").Replace(";", "\\;").Replace(",", "\\,").Replace("\r", "").Replace("\n", "\\n");
         var sb = new StringBuilder();
         sb.Append("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//EduNexus OS//Institutional Calendar//EN\r\nCALSCALE:GREGORIAN\r\n");
+        if (name is not null) sb.Append($"X-WR-CALNAME:{Esc(name)}\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\n");
         var stamp = Utc(DateTimeOffset.UtcNow);
         foreach (var i in items)
         {

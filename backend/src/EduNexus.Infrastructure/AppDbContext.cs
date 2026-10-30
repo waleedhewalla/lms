@@ -49,6 +49,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<CircularResolution> CircularResolutions => Set<CircularResolution>();
     public DbSet<ResolutionVote> ResolutionVotes => Set<ResolutionVote>();
     public DbSet<PolicyQuizQuestion> PolicyQuizQuestions => Set<PolicyQuizQuestion>();
+    public DbSet<CalendarFeedToken> CalendarFeedTokens => Set<CalendarFeedToken>();
     public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
     public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
     public DbSet<IntegrationDelivery> IntegrationDeliveries => Set<IntegrationDelivery>();
@@ -287,6 +288,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             // One row per attestation; a person re-attests on a new version or cycle.
             e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId, x.PolicyVersion });
             e.Property(x => x.PolicyVersion).HasDefaultValue(1);
+        });
+        b.Entity<CalendarFeedToken>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.TokenHash }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.PersonId });
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
         });
         b.Entity<PolicyQuizQuestion>(e =>
         {

@@ -38,6 +38,7 @@ Other IdPs: create a **public** client for the web app:
 | `RateLimiting__PermitsPerMinute` | per signed-in user (per IP when anonymous); default 600. `RateLimiting__Enabled=false` turns limiting off |
 | `RateLimiting__ExpensivePermitsPerMinute` | extra budget for AI, search, exports and token minting; default 60 |
 | `RateLimiting__Redis__ConnectionString` | StackExchange.Redis connection string. When set, all API replicas count requests in Redis and share one budget; if Redis is unreachable the API keeps serving and counts per replica until it returns (a Warning is logged). Unset: each replica counts for itself, so with N replicas the effective limit is N times the number above. The Helm chart sets it to its own Redis by default (`api.rateLimiting.redis`). The limit is not a security boundary against a determined attacker: it is protection against runaway clients, and the ingress should add its own limit for anonymous traffic |
+| `CalendarFeed__TokenDays` | how long a personal calendar subscription link stays valid before the person must make a new one; default 90, allowed 1 to 365 |
 | `ForwardedHeaders__KnownNetworks__0..n` | CIDRs of proxies whose `X-Forwarded-For` is trusted; default loopback + private ranges |
 | `Metrics__AllowExternal` | `/metrics` is served only to loopback/private callers unless `true` |
 | `RabbitMQ__Host/Port/Username/Password` | message broker |

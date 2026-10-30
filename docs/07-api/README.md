@@ -156,6 +156,7 @@ Delegation needs a deputy in the same tenant other than yourself. Dev tokens acc
 
 ## Wave C — R0.2 governance depth (migration `R15GovernanceDepth`, RLS on all new tables)
 - Calendar (`calendar:read|manage`): `GET/POST /api/calendar/events`, `PATCH/DELETE /api/calendar/events/{id}`, `GET /api/calendar/export.ics`.
+  Personal subscription (`calendar:read`, needs a person-linked account): `GET|POST|DELETE /api/calendar/feed-token` (status, issue-and-replace, revoke); the link itself is `GET /api/calendar/feed/{token}.ics`, anonymous, secret in the path, 404 for any wrong, expired, revoked or foreign link.
   The feed merges stored events with meetings, policy reviews and open decision-action deadlines.
 - Committees: `GET/PATCH /api/committees/{id}`, `GET /api/committees/{id}/members`, `DELETE /api/committees/{id}/members/{memberId}`,
   `POST /api/committees/{id}/members/{memberId}/term`

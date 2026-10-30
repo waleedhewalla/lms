@@ -2361,6 +2361,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
             db.RoleAssignments.Add(new RoleAssignment(Guid.NewGuid(), tenant, person.Id, role.Id, "tenant", null, DateTimeOffset.UtcNow));
             db.Correspondences.AddRange(letter, heldLetter);
             db.Correspondents.Add(new Correspondent(Guid.NewGuid(), tenant, letter.Id, person.Id, "Layla Haddad", false));
+            db.CalendarFeedTokens.Add(new CalendarFeedToken(Guid.NewGuid(), tenant, person.Id, new string('a', 64), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(30)));
             db.RecordHolds.Add(new RecordHold(Guid.NewGuid(), tenant, "Correspondence", heldLetter.Id, "Litigation", "legal", DateTimeOffset.UtcNow, null, null));
             await db.SaveChangesAsync();
         }
@@ -2397,6 +2398,8 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
             Assert.Null(p.Email);
             Assert.False(p.IsActive);
             Assert.False(await db.RoleAssignments.AnyAsync(x => x.PersonId == person.Id));
+            Assert.False(await db.CalendarFeedTokens.AnyAsync(x => x.PersonId == person.Id));   // a link to an erased person's calendar must stop working
+            Assert.Contains("1 calendar link", done.GetProperty("summary").GetString());
             Assert.True(await db.Correspondences.AnyAsync(x => x.Id == letter.Id));
             Assert.Equal(p.FullName, (await db.Correspondents.AsNoTracking().SingleAsync(x => x.CorrespondenceId == letter.Id)).DisplayName);
             Assert.Equal(1, await db.AuditEvents.CountAsync(a => a.TenantId == tenant && a.Action == "PersonErased" && a.EntityId == person.Id.ToString()));
