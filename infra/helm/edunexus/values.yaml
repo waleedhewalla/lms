@@ -26,6 +26,11 @@ api:
     redis: "edunexus-redis:6379,abortConnect=false,connectTimeout=300,asyncTimeout=150,syncTimeout=150"
   # CIDRs of proxies whose X-Forwarded-For is trusted (the ingress controller's pod network).
   trustedProxyNetworks: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+  # Read-only links to a learning or student-information system (Moodle, Canvas, Sakai, Banner) that bring in the course
+  # catalogue. Off by default. Turning it on needs the `connectors-key` entry in the api Secret (32 random bytes, base64:
+  # `openssl rand -base64 32`), which seals the credentials stored for those systems.
+  connectors:
+    enabled: false
   storage:
     endpoint: edunexus-minio:9000
   ai:

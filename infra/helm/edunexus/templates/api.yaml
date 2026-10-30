@@ -52,6 +52,11 @@ spec:
             {{- range $i, $cidr := splitList "," .Values.api.trustedProxyNetworks }}
             - { name: ForwardedHeaders__KnownNetworks__{{ $i }}, value: {{ trim $cidr | quote }} }
             {{- end }}
+            {{- if .Values.api.connectors.enabled }}
+            - { name: Connectors__Enabled, value: "true" }
+            - name: Connectors__SecretKey
+              valueFrom: { secretKeyRef: { name: {{ .Values.api.secretName }}, key: connectors-key } }
+            {{- end }}
             - { name: AI__Provider, value: {{ .Values.api.ai.provider | quote }} }
             - { name: AI__BaseUrl, value: {{ .Values.api.ai.baseUrl | quote }} }
             - { name: AI__Model, value: {{ .Values.api.ai.model | quote }} }
