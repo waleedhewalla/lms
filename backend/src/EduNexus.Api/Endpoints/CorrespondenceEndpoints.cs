@@ -103,6 +103,7 @@ public static class CorrespondenceEndpoints
                 if (typeDef.CreatePermission != "correspondence:create" && await ActingPersonAsync(db, ctx, req.TenantId, ct) != req.AuthorId) return Results.Forbid();
                 if (typeDef.RequiresTargetUnit && req.TargetUnitId is null) return Results.BadRequest(new { error = $"{typeDef.NameEn} needs the receiving unit (targetUnitId)." });
                 if (typeDef.RequiresAmount && req.Amount is not > 0) return Results.BadRequest(new { error = $"{typeDef.NameEn} needs an amount greater than zero." });
+                if (await CorrespondenceFlowEndpoints.CollegeCheckAsync(db, req.TenantId, typeDef.Code, req.AuthorId, req.TargetUnitId, ct) is { } outside) return Results.BadRequest(new { error = outside });
             }
             if (req.Amount is < 0 or > 1_000_000_000m) return Results.BadRequest(new { error = "Amount must be between 0 and 1,000,000,000." });
             if (req.TargetUnitId is { } unitId && !await db.OrganizationalUnits.AnyAsync(u => u.TenantId == req.TenantId && u.Id == unitId && u.IsActive, ct))

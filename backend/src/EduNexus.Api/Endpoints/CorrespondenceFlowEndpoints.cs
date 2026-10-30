@@ -183,6 +183,30 @@ public static class CorrespondenceFlowEndpoints
         catch (JsonException) { return "Invalid JSON in nodesJson."; }
     }
 
+    /// <summary>Types that stay inside one college: the sender's department and the receiving unit must share the same top-level unit.</summary>
+    internal static readonly string[] CollegeScoped = ["COLLEGE_ADMIN", "COLLEGE_DEPT", "TO_DEAN"];
+
+    /// <summary>Null when the letter may go; otherwise what is wrong.</summary>
+    internal static async Task<string?> CollegeCheckAsync(AppDbContext db, Guid tenantId, string? typeCode, Guid authorId, Guid? targetUnitId, CancellationToken ct)
+    {
+        if (typeCode is null || !CollegeScoped.Contains(typeCode) || targetUnitId is null) return null;
+        async Task<Guid?> RootAsync(Guid? unit)
+        {
+            for (var i = 0; i < 12 && unit is { } id; i++)
+            {
+                var u = await db.OrganizationalUnits.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
+                if (u is null) return null;
+                if (u.ParentId is null) return u.Id;
+                unit = u.ParentId;
+            }
+            return null;
+        }
+        var mine = (await db.People.FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Id == authorId, ct))?.DepartmentId;
+        if (mine is null) return "Your profile has no department, so the system cannot tell which college this letter belongs to.";
+        var (a, b) = (await RootAsync(mine), await RootAsync(targetUnitId));
+        return a is not null && a == b ? null : "This type of letter stays inside one college: the receiving unit must be in the sender's college.";
+    }
+
     internal static WorkingCalendar CalendarFor(IConfiguration config) =>
         new(WorkingCalendar.ParseWeekend(config["Workweek:WeekendDays"]), TimeSpan.FromHours(config.GetValue("Calendar:UtcOffsetHours", 3.0)));
 
@@ -196,6 +220,7 @@ public static class CorrespondenceFlowEndpoints
         if (def?.WorkflowCode is null) return (Results.Conflict(new { error = "This letter's type has no workflow." }), null);
         if (def.RequiresTargetUnit && c.TargetUnitId is null) return (Results.BadRequest(new { error = $"{def.NameEn} needs the receiving unit (targetUnitId)." }), null);
         if (def.RequiresAmount && c.Amount is not > 0) return (Results.BadRequest(new { error = $"{def.NameEn} needs an amount greater than zero." }), null);
+        if (await CollegeCheckAsync(db, c.TenantId, c.TypeCode, c.AuthorId, c.TargetUnitId, ct) is { } outside) return (Results.BadRequest(new { error = outside }), null);
         var recipient = await db.Correspondents.Where(x => x.TenantId == c.TenantId && x.CorrespondenceId == c.Id && x.Kind == RecipientKind.To && x.PersonId != null)
             .Select(x => x.PersonId).FirstOrDefaultAsync(ct);
         var context = new Dictionary<string, object?>

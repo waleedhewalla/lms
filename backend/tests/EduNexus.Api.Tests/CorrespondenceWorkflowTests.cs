@@ -21,7 +21,7 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
     private static readonly string[] Records = ["records:manage", "correspondence:read"];
     private static readonly string[] StudentOnly = ["correspondence:student-request"];
 
-    private sealed record World(Guid Tenant, Guid Author, Guid Head, Guid Dean, Guid TargetHead, Guid TargetUnit, Guid Finance, Guid Vp, Guid President, Guid Hr, Guid StudentAffairs);
+    private sealed record World(Guid Tenant, Guid Author, Guid Head, Guid Dean, Guid TargetHead, Guid TargetUnit, Guid College, Guid Sibling, Guid Finance, Guid Vp, Guid President, Guid Hr, Guid StudentAffairs);
 
     private HttpClient As(Guid tenant, string[] perms, Guid? person = null)
     {
@@ -42,10 +42,11 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
         var college = OrganizationalUnit.Create(tenant, "COL", "College", null, dean);
         var dept = OrganizationalUnit.Create(tenant, "DEP", "Department", college.Id, head);
         var target = OrganizationalUnit.Create(tenant, "TGT", "Target", null, targetHead);
+        var sibling = OrganizationalUnit.Create(tenant, "SIB", "Sibling department", college.Id, targetHead);
         var author = new Person(Guid.NewGuid(), tenant, PersonType.Employee, "Author", null, true, DateTimeOffset.UtcNow, dept.Id);
         await Db(async db =>
         {
-            db.OrganizationalUnits.AddRange(college, dept, target);
+            db.OrganizationalUnits.AddRange(college, dept, target, sibling);
             db.People.Add(author);
             if (withFinanceRoles)
                 foreach (var (code, who) in new[] { ("FINANCE_MANAGER", fin), ("VP_ADMIN_FINANCE", vp), ("PRESIDENT", pres), ("HR_MANAGER", hr), ("STUDENT_AFFAIRS", sa) })
@@ -58,7 +59,7 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
             return 0;
         });
         if (seed) Assert.Equal(HttpStatusCode.OK, (await As(tenant, Manager).PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = tenant })).StatusCode);
-        return new World(tenant, author.Id, head, dean, targetHead, target.Id, fin, vp, pres, hr, sa);
+        return new World(tenant, author.Id, head, dean, targetHead, target.Id, college.Id, sibling.Id, fin, vp, pres, hr, sa);
     }
 
     private async Task<Guid> CreateAsync(World w, string typeCode, decimal? amount = null, Guid? unit = null, Guid? to = null, string priority = "Normal")
@@ -120,38 +121,56 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
     }
 
     [Fact]
-    public async Task A_Letter_To_The_Dean_Goes_Through_The_Vice_Dean_And_Needs_One()
+    public async Task A_Letter_To_The_Dean_Passes_The_Vice_Dean_When_There_Is_One_And_Skips_The_Step_When_There_Is_Not()
     {
         var w = await BuildAsync();
-        var id = await CreateAsync(w, "TO_DEAN", unit: w.TargetUnit);
-        var noDeputy = await SubmitAsync(w, id);                                  // the college has no vice dean yet
-        Assert.Equal(HttpStatusCode.OK, noDeputy.StatusCode);                      // the first step (line manager) exists
-        var first = await PendingAsync(w.Tenant, id);
-        var stuck = await DecideAsync(w, first, true);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, stuck.StatusCode);
-        Assert.Contains("deputy", (await Json(stuck)).GetProperty("error").GetString());
-        var viceDean = w.Finance;                                                  // any person will do for the test
-        await Db(async db => { var u = await db.OrganizationalUnits.SingleAsync(x => x.Id == w.TargetUnit); db.Entry(u).CurrentValues.SetValues(u with { DeputyPersonId = viceDean }); await db.SaveChangesAsync(); return 0; });
-        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, first, true)).StatusCode);
-        var second = await PendingAsync(w.Tenant, id);
-        Assert.Equal(viceDean, second.AssigneeId);                                 // vice dean first
-        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, second, true)).StatusCode);
-        Assert.Equal(w.TargetHead, (await PendingAsync(w.Tenant, id)).AssigneeId); // then the dean
+        // The college has no vice dean yet: the optional step is passed over and the dean decides.
+        var first = await CreateAsync(w, "TO_DEAN", unit: w.College);
+        Assert.Equal(HttpStatusCode.OK, (await SubmitAsync(w, first)).StatusCode);
+        Assert.Equal(w.Head, (await PendingAsync(w.Tenant, first)).AssigneeId);                       // the sender's line manager
+        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, await PendingAsync(w.Tenant, first), true)).StatusCode);
+        Assert.Equal(w.Dean, (await PendingAsync(w.Tenant, first)).AssigneeId);                        // straight to the dean
+        var skipped = await Db(db => db.AuditEvents.CountAsync(a => a.TenantId == w.Tenant && a.Action == "WorkflowStepSkipped" && a.Details!.Contains("optional step")));
+        Assert.Equal(1, skipped);
+
+        // With a vice dean, the vice dean comes first.
+        var viceDean = w.Finance;                                                                      // any person will do for the test
+        await Db(async db => { var u = await db.OrganizationalUnits.SingleAsync(x => x.Id == w.College); db.Entry(u).CurrentValues.SetValues(u with { DeputyPersonId = viceDean }); await db.SaveChangesAsync(); return 0; });
+        var second = await CreateAsync(w, "TO_DEAN", unit: w.College);
+        await SubmitAsync(w, second);
+        await DecideAsync(w, await PendingAsync(w.Tenant, second), true);
+        Assert.Equal(viceDean, (await PendingAsync(w.Tenant, second)).AssigneeId);
+        await DecideAsync(w, await PendingAsync(w.Tenant, second), true);
+        Assert.Equal(w.Dean, (await PendingAsync(w.Tenant, second)).AssigneeId);
     }
 
     [Fact]
-    public async Task College_Administrations_And_Departments_Write_Head_To_Head()
+    public async Task College_Administrations_And_Departments_Write_Head_To_Head_Inside_One_College()
     {
         var w = await BuildAsync();
         foreach (var code in new[] { "COLLEGE_ADMIN", "COLLEGE_DEPT" })
         {
-            var id = await CreateAsync(w, code, unit: w.TargetUnit);
+            var id = await CreateAsync(w, code, unit: w.Sibling);
             Assert.Equal(HttpStatusCode.OK, (await SubmitAsync(w, id)).StatusCode);
             Assert.Equal(w.Head, (await PendingAsync(w.Tenant, id)).AssigneeId);
             Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, await PendingAsync(w.Tenant, id), true)).StatusCode);
             Assert.Equal(w.TargetHead, (await PendingAsync(w.Tenant, id)).AssigneeId);
         }
-        Assert.Equal(HttpStatusCode.BadRequest, (await As(w.Tenant, Writer, w.Author).PostAsJsonAsync("/api/correspondence", new { tenantId = w.Tenant, type = "Internal", subject = "s", content = "c", authorId = w.Author, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(), typeCode = "TO_DEAN" })).StatusCode);   // needs the college
+        object Body(string code, Guid? unit) => new { tenantId = w.Tenant, type = "Internal", subject = "s", content = "c", authorId = w.Author, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(), typeCode = code, targetUnitId = unit };
+        var author = As(w.Tenant, Writer, w.Author);
+        Assert.Equal(HttpStatusCode.BadRequest, (await author.PostAsJsonAsync("/api/correspondence", Body("TO_DEAN", null))).StatusCode);                  // needs the college
+        // Another college is refused for the college types, with the reason; the general between-departments type is not limited.
+        foreach (var code in new[] { "COLLEGE_ADMIN", "COLLEGE_DEPT", "TO_DEAN" })
+        {
+            var res = await author.PostAsJsonAsync("/api/correspondence", Body(code, w.TargetUnit));
+            Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+            Assert.Contains("one college", (await Json(res)).GetProperty("error").GetString());
+        }
+        Assert.Equal(HttpStatusCode.Created, (await author.PostAsJsonAsync("/api/correspondence", Body("INTER_UNIT", w.TargetUnit))).StatusCode);
+        // A sender with no department cannot be placed in a college.
+        var noDept = await Db(async db => { var p = new Person(Guid.NewGuid(), w.Tenant, PersonType.Employee, "No Dept", null, true, DateTimeOffset.UtcNow); db.People.Add(p); await db.SaveChangesAsync(); return p.Id; });
+        var res2 = await As(w.Tenant, Writer, noDept).PostAsJsonAsync("/api/correspondence", new { tenantId = w.Tenant, type = "Internal", subject = "s", content = "c", authorId = noDept, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(), typeCode = "COLLEGE_DEPT", targetUnitId = w.Sibling });
+        Assert.Equal(HttpStatusCode.BadRequest, res2.StatusCode);
     }
 
     [Fact]

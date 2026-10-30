@@ -166,7 +166,14 @@ public static class WorkflowRunner
             {
                 case "approval":
                 {
-                    var assignee = await ApplyDelegationFallbackAsync(db, tenantId, await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct), ct);
+                    Guid assignee;
+                    try { assignee = await ApplyDelegationFallbackAsync(db, tenantId, await ResolveAssigneeAsync(db, tenantId, node, actorId, instance, ct), ct); }
+                    catch (KeyNotFoundException) when (node.TryGetProperty("optional", out var opt) && opt.ValueKind == JsonValueKind.True)
+                    {
+                        // An optional step nobody holds (for example a college with no vice dean) is passed over, and the history says so.
+                        Skipped(db, tenantId, instance, nodeId, "optional step has no one to hold it");
+                        continue;
+                    }
                     if (node.TryGetProperty("skipDuplicate", out var sd) && sd.ValueKind == JsonValueKind.True && IsSameAsBefore(db, instance, assignee))
                     {
                         Skipped(db, tenantId, instance, nodeId, "same person as the author or an earlier approver");
