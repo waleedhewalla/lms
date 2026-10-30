@@ -157,7 +157,12 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Only courses are read: code, title, term, dates, a head count where the system reports one, and instructor names. No students, grades or submissions. A course the system stops listing is marked inactive, not deleted; a failed read keeps the last good catalogue and reports why (502 with a message, last result on the connector).
 - Credentials are sealed at rest (AES-256-GCM, key `Connectors__SecretKey`, bound to the tenant and connector), never returned, and the other system is called without holding a database transaction. Addresses pass the webhook guard (no internal addresses unless `Integrations__AllowPrivateTargets`), redirects and cross-server next-page links are not followed, answers are size- and count-capped. Moodle's token goes in the request body, not the address.
 - Two new tenant-isolated tables (`ConnectorConfigs`, `ExternalCourses`); additive migration. The Helm chart gains `api.connectors.enabled` (reads the key from the api Secret).
-- **Not yet validated against a live system.** The four clients are tested against sample answers shaped like each system's documented API. Run each once against the pilot's own system; Sakai and Banner differ most between versions and give no counts or instructors. The screen for this comes in the next change; until then it is used through the API.
+- **Not yet validated against a live system.** The four clients are tested against sample answers shaped like each system's documented API. Run each once against the pilot's own system; Sakai and Banner differ most between versions and give no counts or instructors. The screen for this is described in the next section.
+
+## Connected systems screen
+- New module **Connected systems** (Administration; needs `integration:read` to look and `integration:manage` to change): add a connection (system, address, credential and the few options each system takes), read it now, upload a CSV for a file connection, delete it, and browse the course catalogue with search, a connection filter, "only courses still listed" and paging.
+- The credential field is a password box; after saving it is never shown again. A failed read shows the server's own explanation (for example "the server refused the credential (401)" or "could not be reached") and the last good catalogue stays. A rejected CSV names the rows at fault.
+- When connectors are off on the server, the page says so and shows nothing else.
 
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
