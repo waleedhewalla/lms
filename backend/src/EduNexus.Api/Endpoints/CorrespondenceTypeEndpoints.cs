@@ -100,9 +100,17 @@ public static partial class CorrespondenceTypeEndpoints
             if (created.Count > 0)
                 DomainEvents.Record(db, req.TenantId, "CorrespondenceTypesSeeded", "CorrespondenceTypesSeeded", nameof(CorrespondenceTypeDef), req.TenantId.ToString(),
                     actorId: await ActingPersonAsync(db, ctx, req.TenantId, ct), details: string.Join(",", created));
+            // The workflow each type follows is created too, unless the university already has one under that code.
+            var haveFlows = (await db.WorkflowDefinitions.Where(w => w.TenantId == req.TenantId).Select(w => w.Code).ToListAsync(ct)).ToHashSet();
+            var workflowsCreated = new List<string>();
+            foreach (var (code, name, nodes) in CorrespondenceWorkflows.Defaults.Where(w => !haveFlows.Contains(w.Code)))
+            {
+                db.WorkflowDefinitions.Add(new WorkflowDefinition(Guid.NewGuid(), req.TenantId, code, name, 1, nodes, true));
+                workflowsCreated.Add(code);
+            }
             await db.SaveChangesAsync(ct);
             await scope.CommitAsync(ct);
-            return Results.Ok(new { created, existing = have.OrderBy(x => x).ToList() });
+            return Results.Ok(new { created, existing = have.OrderBy(x => x).ToList(), workflowsCreated });
         });
     }
 

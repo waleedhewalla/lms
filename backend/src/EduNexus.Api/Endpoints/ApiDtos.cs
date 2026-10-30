@@ -20,7 +20,7 @@ public sealed record CreateRoutingSlipReq(Guid TenantId, Guid FromPersonId, Guid
 /// <summary>PersonId omitted: the caller votes for themselves. Given and not the caller: the secretary records a vote cast in the room (meeting:create).</summary>
 public sealed record CastMeetingVoteReq(Guid TenantId, Guid AgendaItemId, Guid? PersonId, string Choice, string? Remarks = null);
 public sealed record SetDocumentRetentionReq(Guid TenantId, string Standard, int RetentionPeriodMonths, string DispositionAction, int ReviewIntervalMonths, Guid? ReviewedByPersonId = null, string? Notes = null);
-public sealed record SubmitCorrespondenceReq(Guid TenantId, Guid ReviewerId);
+public sealed record SubmitCorrespondenceReq(Guid TenantId, Guid? ReviewerId = null);
 public sealed record DecideApprovalReq(Guid TenantId, Guid? DecidedBy, bool Approve, string? Comment);
 public sealed record RequestChangesReq(Guid TenantId, Guid DecidedBy, string? Comment);
 public sealed record DelegateApprovalReq(Guid TenantId, Guid DelegatedBy, Guid DelegateTo);

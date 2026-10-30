@@ -133,30 +133,45 @@ public static class CorrespondenceEndpoints
             return Results.Created($"/api/correspondence/{c.Id}", c);
         });
 
-        corr.MapPost("/{id:guid}/submit", async (AppDbContext db, HttpContext ctx, Guid id, SubmitCorrespondenceReq req, CancellationToken ct) =>
+        corr.MapPost("/{id:guid}/submit", async (AppDbContext db, HttpContext ctx, IConfiguration config, Guid id, SubmitCorrespondenceReq req, CancellationToken ct) =>
         {
-            if (!ctx.User.HasPermission("correspondence:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var c = await db.Correspondences.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (c is null || (c.IsConfidential && !CanSeeConfidential(ctx.User))) return Results.NotFound(new { error = "Correspondence not found." });
+            var me = await ActingPersonAsync(db, ctx, req.TenantId, ct);
+            // A typed letter is sent by its author, through its type's workflow (a student sends only their own request).
+            // An untyped letter keeps the original path: the general permission and one named reviewer.
+            if (c.TypeCode is not null)
+            {
+                if (me is null || me != c.AuthorId) return Results.Forbid();
+                if (c.Status != CorrespondenceStatus.Draft)
+                    return Results.Conflict(new { error = $"Only Draft correspondence can be submitted (now {c.Status})." });
+                var (error, started) = await CorrespondenceFlowEndpoints.BeginAsync(db, config, c, ct);
+                if (error is not null) return error;
+                await db.SaveChangesAsync(ct);
+                await scope.CommitAsync(ct);
+                return Results.Ok(started);
+            }
+            if (!ctx.User.HasPermission("correspondence:create")) return Results.Forbid();
             if (c.Status != CorrespondenceStatus.Draft)
                 return Results.Conflict(new { error = $"Only Draft correspondence can be submitted (now {c.Status})." });
-            if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == req.ReviewerId, ct))
+            if (req.ReviewerId is not { } reviewerId) return Results.BadRequest(new { error = "reviewerId is required for a letter without a type." });
+            if (!await db.People.AnyAsync(p => p.TenantId == req.TenantId && p.Id == reviewerId, ct))
                 return Results.NotFound(new { error = "Reviewer not found in tenant." });
             db.Entry(c).CurrentValues.SetValues(c with { Status = CorrespondenceStatus.Submitted });
             var accelerated = c.Priority is CorrespondencePriority.High or CorrespondencePriority.Urgent;
             var approval = new Approval(Guid.NewGuid(), req.TenantId, nameof(Correspondence), c.Id,
-                req.ReviewerId, ApprovalStatus.Pending,
+                reviewerId, ApprovalStatus.Pending,
                 accelerated ? ApprovalPriority.Accelerated : ApprovalPriority.Normal,
                 DateTimeOffset.UtcNow.AddDays(accelerated ? 2 : 5), null, null, null);
             db.Approvals.Add(approval);
             db.WorkTasks.Add(new WorkTask(Guid.NewGuid(), req.TenantId, $"Review {c.Number}: {c.Subject}",
-                req.ReviewerId, approval.Id, WorkTaskStatus.Open, approval.DueAt, DateTimeOffset.UtcNow));
+                reviewerId, approval.Id, WorkTaskStatus.Open, approval.DueAt, DateTimeOffset.UtcNow));
             DomainEvents.Record(db, req.TenantId, "CorrespondenceSubmitted", "CorrespondenceSubmitted",
                 nameof(Correspondence), c.Id.ToString(),
-                payload: new { tenantId = req.TenantId, correspondenceId = c.Id, number = c.Number, reviewerId = req.ReviewerId, approvalId = approval.Id },
-                details: $"{c.Number}->{req.ReviewerId}");
+                payload: new { tenantId = req.TenantId, correspondenceId = c.Id, number = c.Number, reviewerId = reviewerId, approvalId = approval.Id },
+                details: $"{c.Number}->{reviewerId}");
             await db.SaveChangesAsync(ct);
             await scope.CommitAsync(ct);
             return Results.Ok(new { correspondence = c, approvalId = approval.Id });

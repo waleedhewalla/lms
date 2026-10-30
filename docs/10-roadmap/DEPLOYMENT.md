@@ -34,6 +34,7 @@ Other IdPs: create a **public** client for the web app:
 | `EDUNEXUS_CONNECTION` | Npgsql connection string |
 | `Auth__Authority`, `Auth__Audience` | OIDC issuer and audience |
 | `Auth__EnableDevToken` | must be `false` in production |
+| `Workweek__WeekendDays` | optional; days off for deadlines counted in working days, comma-separated names. Default `Friday,Saturday`. Holidays come from the calendar (events of kind Holiday) |
 | `Cors__AllowedOrigins` | browser origin(s) of the web app, comma-separated. Unset outside Development = no cross-origin access |
 | `RateLimiting__PermitsPerMinute` | per signed-in user (per IP when anonymous); default 600. `RateLimiting__Enabled=false` turns limiting off |
 | `RateLimiting__ExpensivePermitsPerMinute` | extra budget for AI, search, exports and token minting; default 60 |

@@ -325,7 +325,8 @@ public sealed record FormSubmission(
 
 // ============================ R0.1 Track B — Workflow Engine ============================
 
-public enum WorkflowInstanceStatus { Running, Completed, Closed, Rejected }
+// Returned = a reviewer sent it back to its author for changes (a new round starts when the author resubmits). Added at the end so stored values keep their meaning.
+public enum WorkflowInstanceStatus { Running, Completed, Closed, Rejected, Returned }
 
 /// <summary>
 /// Versioned node graph. v1 linear nodes: start, approval {personId?, roleCode?, slaDays?},
