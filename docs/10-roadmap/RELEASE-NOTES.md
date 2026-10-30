@@ -185,6 +185,10 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **For the university to confirm:** the financial limits (50,000 and 250,000 are placeholders), who closes each type, whether a returned letter restarts from the first step, and whether the student request type is switched on. The screens follow in step 3.
 - Not yet: the screens for all of this (step 3).
 
+## Correspondence inside a college
+- Three more standard types: between college administrations, between departments of a college, and to the dean or vice dean (line manager, then vice dean, then dean). `seed-defaults` now creates twelve types; tenants already seeded get the new ones by running it again. Workflow steps can now be addressed to the receiving unit's deputy (`target_deputy`).
+- To confirm: whether the sender and receiver must be in the same college (not enforced yet), and whether the vice dean step is always required.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

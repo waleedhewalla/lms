@@ -1,6 +1,6 @@
 # Internal correspondence: types and workflows
 
-Every internal letter has a **type**. The type says who may start it, what it must contain, and which workflow it follows from creation to closure. The catalogue and the workflows are data: the university edits them (`PATCH /api/correspondence/types/{id}`, `POST /api/workflows/definitions/{id}/new-version`) without a release. `POST /api/correspondence/types/seed-defaults` creates the standard nine and their workflows; anything the university already has is left alone.
+Every internal letter has a **type**. The type says who may start it, what it must contain, and which workflow it follows from creation to closure. The catalogue and the workflows are data: the university edits them (`PATCH /api/correspondence/types/{id}`, `POST /api/workflows/definitions/{id}/new-version`) without a release. `POST /api/correspondence/types/seed-defaults` creates the standard twelve and their workflows; anything the university already has is left alone.
 
 ## Life of a letter
 
@@ -25,7 +25,7 @@ any unfinished letter ── close (records:manage, reason) ─▶ Closed
 - **Missing approver:** if a role has no holder or a unit has no head, nothing is started or saved; the sender is told what is missing (HTTP 422) and the decision can be repeated once the organisation is completed.
 - **Confidential** letters follow the same steps and stay hidden from anyone without `correspondence:confidential`.
 
-## The nine types
+## The twelve types
 
 | Type (code) | Sender | Receiver | Purpose | Steps (responsible, deadline) | Extra conditions |
 |---|---|---|---|---|---|
@@ -38,6 +38,9 @@ any unfinished letter ── close (records:manage, reason) ─▶ Closed
 | Decision (`DECISION`) | Authorised official | Everyone concerned | Official decisions | 1 `LEGAL_ADVISOR` (3 d) · 2 The recipient, notification (2 d) · Close | |
 | Circular (`CIRCULAR`) | An official | A group or units | General notices | 1 Line manager (2 d) · 2 Dean (3 d) · Close | |
 | Information request or complaint (`INFO_REQUEST`) | Any staff member | The competent unit | Information or a complaint | 1 The recipient or the competent unit's head (5 d) · Close | Needs a recipient or a receiving unit |
+| Between college administrations (`COLLEGE_ADMIN`) | An administration of the college | Another administration of the same college | Coordination inside a college | 1 Head of the sending administration (3 d) · 2 Head of the receiving administration (3 d) · Close | Needs a receiving unit |
+| Between departments of a college (`COLLEGE_DEPT`) | A department of the college | Another department of the same college | Coordination between departments | 1 Head of the sending department (3 d) · 2 Head of the receiving department (3 d) · Close | Needs a receiving unit |
+| To the dean or vice dean (`TO_DEAN`) | A member or unit of the college | Vice dean, then dean | A matter put to the college leadership | 1 Line manager (2 d) · 2 Vice dean = deputy of the receiving unit (3 d) · 3 Dean = head of the receiving unit (3 d) · Close | The receiving unit is the college; it must have a deputy, or remove step 2 |
 
 At every step the approver may **approve**, **reject** (reason required) or **return for changes** (reason required). An approver on leave is replaced by their active delegate (existing delegation).
 
@@ -62,4 +65,5 @@ Roles the standard workflows look for (create them, or edit the workflows): `FIN
 2. **Who closes a letter.** Assumed: the last step of the workflow closes it; the author may withdraw; records may close any unfinished letter.
 3. **After a return**, does the letter restart from the first step (assumed) or resume at the step that returned it?
 4. The **student request** type is created switched off. Switch it on when student affairs is ready to receive them.
-5. Step names, deadlines and the role codes above are the proposed defaults.
+5. College types: the system does not yet check that the sender and the receiving unit belong to the *same* college; the vice dean step is mandatory in `TO_DEAN` until the workflow is edited.
+6. Step names, deadlines and the role codes above are the proposed defaults.

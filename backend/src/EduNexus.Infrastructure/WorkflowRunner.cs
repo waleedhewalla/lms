@@ -326,13 +326,18 @@ public static class WorkflowRunner
             }
 
             // The head of the unit a letter is addressed to, and the head of the unit above it.
-            if (key is "target_head" or "target_dean")
+            if (key is "target_head" or "target_dean" or "target_deputy")
             {
                 if (Guid.TryParse(ctx["targetUnitId"]?.GetValue<string>(), out var targetUnit))
                 {
                     var unit = await db.OrganizationalUnits.FirstOrDefaultAsync(u => u.TenantId == tenantId && u.Id == targetUnit, ct);
                     if (key == "target_dean" && unit?.ParentId is Guid up)
                         unit = await db.OrganizationalUnits.FirstOrDefaultAsync(u => u.TenantId == tenantId && u.Id == up, ct) ?? unit;
+                    if (key == "target_deputy")
+                    {
+                        if (unit?.DeputyPersonId is Guid deputy && deputy != Guid.Empty) return deputy;
+                        throw new KeyNotFoundException($"The receiving unit '{unit?.Name ?? targetUnit.ToString()}' has no deputy (vice dean) to receive this letter.");
+                    }
                     if (unit?.LeaderPersonId is Guid head && head != Guid.Empty) return head;
                     throw new KeyNotFoundException($"The receiving unit '{unit?.Name ?? targetUnit.ToString()}' has no head to receive this letter.");
                 }
