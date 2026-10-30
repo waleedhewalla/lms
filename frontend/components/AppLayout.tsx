@@ -1,11 +1,12 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { config } from "../lib/config";
+import { canOpen, GROUPS, moduleFor, MODULES } from "../lib/modules";
 import { signOut } from "../lib/oidc";
 import { BrandMark, LandingIcon } from "./LandingIcon";
-import { PUBLIC_PATHS, PublicFooter, PublicHeader, useSignedInName } from "./PublicChrome";
+import { OPEN_PATHS, PUBLIC_PATHS, PublicFooter, PublicHeader, useSession } from "./PublicChrome";
 import { useTranslation } from "./TranslationProvider";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -14,10 +15,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [grafanaUrl, setGrafanaUrl] = useState("");
   useEffect(() => setGrafanaUrl(config().grafanaUrl), []);
   const pathname = usePathname();
-  const user = useSignedInName();
+  const router = useRouter();
+  const session = useSession();
+  const isPublic = PUBLIC_PATHS.includes(pathname);
+  const isOpen = OPEN_PATHS.includes(pathname);
+
+  // The workspace is for signed-in people only: anyone else goes to sign-in and comes back here afterwards.
+  useEffect(() => {
+    if (!isPublic && !isOpen && session === null) router.replace(`/signin?next=${encodeURIComponent(pathname)}`);
+  }, [isPublic, isOpen, session, pathname, router]);
 
   // Public pages (home, sign-in, privacy notice) get the marketing header and footer, not the workspace sidebar.
-  if (PUBLIC_PATHS.includes(pathname)) {
+  if (isPublic) {
     return (
       <div className="pub-page">
         <PublicHeader />
@@ -26,6 +35,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
+  if (isOpen) return <main className="page-container">{children}</main>;
+  if (!session) {
+    return <div className="ws-wait" role="status">{session === null ? L("Redirecting to sign in…", "جارٍ التحويل إلى تسجيل الدخول…") : L("Loading…", "جارٍ التحميل…")}</div>;
+  }
+
+  const current = moduleFor(pathname);
+  const denied = current && !canOpen(current, session.perms) ? current : null;
 
   return (
     <div className="app-container">
@@ -33,36 +49,32 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <Link href="/" className="sidebar-brand" aria-label={L("EduNexus home", "EduNexus — الصفحة الرئيسية")}>
           <BrandMark size={30} /><h2>{t("app.title")}</h2>
         </Link>
-        <nav style={{ flex: 1 }}>
-          <Link href="/dashboard" className="nav-link">{t("nav.dashboard")}</Link>
-          <Link href="/directory" className="nav-link">{t("nav.directory")}</Link>
-          <Link href="/roles" className="nav-link">{t("nav.roles")}</Link>
-          <Link href="/audit" className="nav-link">{t("nav.audit")}</Link>
-          <Link href="/correspondence" className="nav-link">{t("nav.correspondence")}</Link>
-          <Link href="/approvals" className="nav-link">{t("nav.approvals")}</Link>
-          <Link href="/meetings" className="nav-link">{t("nav.meetings")}</Link>
-          <Link href="/intelligence" className="nav-link">{t("nav.intelligence")}</Link>
-          <hr style={{ border: 0, borderTop: "1px solid rgba(148,163,184,0.25)", margin: "0.75rem 0" }} />
-          <Link href="/my-work" className="nav-link">📥 {L("My Work", "عملي")}</Link>
-          <Link href="/requests" className="nav-link">📝 {L("Requests", "الطلبات")}</Link>
-          <Link href="/tasks" className="nav-link">☑️ {L("Tasks", "المهام")}</Link>
-          <Link href="/governance" className="nav-link">🏛️ {L("Committees & Minutes", "اللجان والمحاضر")}</Link>
-          <Link href="/board" className="nav-link">🗳️ {L("Board", "مجلس الإدارة")}</Link>
-          <Link href="/decisions" className="nav-link">⚖️ {L("Decisions", "القرارات")}</Link>
-          <Link href="/policies" className="nav-link">📘 {L("Policies", "السياسات")}</Link>
-          <Link href="/calendar" className="nav-link">🗓️ {L("Calendar", "التقويم")}</Link>
-          <Link href="/reports" className="nav-link">📈 {L("Reports", "التقارير")}</Link>
-          <Link href="/accreditation" className="nav-link">🎓 {L("Accreditation", "الاعتماد")}</Link>
-          <Link href="/strategy" className="nav-link">🎯 {L("Strategy", "الاستراتيجية")}</Link>
-          <Link href="/records" className="nav-link">🗄️ {L("Records Retention", "حفظ السجلات")}</Link>
-          <Link href="/settings" className="nav-link">⚙️ {L("Settings", "الإعدادات")}</Link>
+        <nav style={{ flex: 1 }} aria-label={L("Modules", "الوحدات")}>
+          <Link href="/dashboard" className={`nav-link ws-nav${pathname === "/dashboard" ? " ws-nav-on" : ""}`}
+            aria-current={pathname === "/dashboard" ? "page" : undefined}>
+            <LandingIcon name="building" size={18} />{L("All modules", "كل الوحدات")}
+          </Link>
+          {GROUPS.map((g) => {
+            const mods = MODULES.filter((m) => m.group === g.key && canOpen(m, session.perms));
+            if (mods.length === 0) return null;
+            return (
+              <div key={g.key} className="ws-nav-group">
+                <p className="ws-nav-title">{L(g.en, g.ar)}</p>
+                {mods.map((m) => {
+                  const on = current?.href === m.href;
+                  return (
+                    <Link key={m.href} href={m.href} className={`nav-link ws-nav${on ? " ws-nav-on" : ""}`} aria-current={on ? "page" : undefined}>
+                      <LandingIcon name={m.icon} size={18} />{locale === "ar" ? m.ar[0] : m.en[0]}
+                    </Link>);
+                })}
+              </div>);
+          })}
         </nav>
         <div style={{ marginTop: 'auto', opacity: 0.7, fontSize: '0.8rem' }}>
           <Link href="/privacy" style={{ color: "inherit" }}>{L("Privacy notice", "إشعار الخصوصية")}</Link>
-          <p>{t("app.title")}</p>
         </div>
       </aside>
-      
+
       <div className="main-content">
         <header className="header">
           <div style={{ flex: 1 }}></div>
@@ -74,23 +86,24 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <a href={grafanaUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.875rem' }}>
                 {t("btn.grafana")}
               </a>)}
-            {user ? (
-              <span className="account-chip">
-                <span className="account-icon" aria-hidden="true"><LandingIcon name="user" size={18} /></span>
-                <span className="account-name">{user}</span>
-                <button type="button" className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => signOut()}>
-                  {L("Sign out", "تسجيل الخروج")}</button>
-              </span>
-            ) : user === null && (
-              <Link href={`/signin?next=${encodeURIComponent(pathname)}`} className="account-chip account-signin" title={L("Sign in", "تسجيل الدخول")}>
-                <span className="account-icon" aria-hidden="true"><LandingIcon name="signin" size={18} /></span>
-                <span>{L("Sign in", "تسجيل الدخول")}</span>
-              </Link>)}
+            <span className="account-chip">
+              <span className="account-icon" aria-hidden="true"><LandingIcon name="user" size={18} /></span>
+              <span className="account-name">{session.name}</span>
+              <button type="button" className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => signOut()}>
+                {L("Sign out", "تسجيل الخروج")}</button>
+            </span>
           </div>
         </header>
-        
+
         <main className="page-container">
-          {children}
+          {!denied ? children : (
+            <div className="glass-card ws-denied" role="alert">
+              <span className="pub-tile pub-tone-red"><LandingIcon name="lock" /></span>
+              <h1>{L("You don't have access to this module", "ليست لديك صلاحية لهذه الوحدة")}</h1>
+              <p>{L(`${denied.en[0]} needs a role your account does not have. Ask your administrator if you need it.`,
+                    `تتطلب وحدة «${denied.ar[0]}» دورًا غير متاح لحسابك. اطلب ذلك من مدير النظام إذا احتجت إليه.`)}</p>
+              <Link href="/dashboard" className="btn">{L("Back to my modules", "العودة إلى وحداتي")}</Link>
+            </div>)}
         </main>
       </div>
     </div>
