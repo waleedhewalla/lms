@@ -687,6 +687,10 @@ namespace EduNexus.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<decimal?>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<Guid>("AuthorId")
                         .HasColumnType("uuid");
 
@@ -723,6 +727,9 @@ namespace EduNexus.Infrastructure.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)");
 
+                    b.Property<Guid?>("TargetUnitId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
@@ -730,6 +737,10 @@ namespace EduNexus.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<string>("TypeCode")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
                     b.HasKey("Id");
 
@@ -739,6 +750,8 @@ namespace EduNexus.Infrastructure.Migrations
                     b.HasIndex("TenantId", "ParentCorrespondenceId");
 
                     b.HasIndex("TenantId", "Status");
+
+                    b.HasIndex("TenantId", "TypeCode");
 
                     b.ToTable("Correspondences");
                 });
@@ -792,6 +805,74 @@ namespace EduNexus.Infrastructure.Migrations
                     b.HasIndex("TenantId", "ToPersonId", "IsCompleted");
 
                     b.ToTable("CorrespondenceRoutingSlips");
+                });
+
+            modelBuilder.Entity("EduNexus.Foundation.CorrespondenceTypeDef", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("CreatePermission")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("NameAr")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("NameEn")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ReceiverDescription")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<bool>("RequiresAmount")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequiresTargetUnit")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SenderDescription")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("WorkflowCode")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Code")
+                        .IsUnique();
+
+                    b.ToTable("CorrespondenceTypes", (string)null);
                 });
 
             modelBuilder.Entity("EduNexus.Foundation.Correspondent", b =>

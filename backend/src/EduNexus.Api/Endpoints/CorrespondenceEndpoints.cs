@@ -26,19 +26,19 @@ public static class CorrespondenceEndpoints
         // The register: every letter of a year in numbering order, filterable, with who received it and who got a copy.
         // Confidential letters appear only to callers cleared for them. Content is never part of the register.
         corr.MapGet("/register", async (AppDbContext db, HttpContext ctx, IConfiguration config, Guid tenantId, int? year, string? type,
-            string? status, string? q, int? skip, int? take, CancellationToken ct) =>
+            string? status, string? q, int? skip, int? take, string? typeCode, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
             if (BadFilter(type, status) is { } bad) return bad;
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
-            var rows = await RegisterRowsAsync(db, ctx, config, tenantId, year, type, status, q, skip ?? 0, Math.Clamp(take ?? 50, 1, 200), ct);
+            var rows = await RegisterRowsAsync(db, ctx, config, tenantId, year, type, status, q, skip ?? 0, Math.Clamp(take ?? 50, 1, 200), ct, typeCode);
             return Results.Ok(rows);
         });
 
         // The same register as a spreadsheet; calendar=hijri|both adds Umm al-Qura dates (as the report exports do).
         corr.MapGet("/register/export", async (AppDbContext db, HttpContext ctx, IConfiguration config, Guid tenantId, int? year, string? type,
-            string? status, string? q, string? calendar, CancellationToken ct) =>
+            string? status, string? q, string? calendar, string? typeCode, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
@@ -46,7 +46,7 @@ public static class CorrespondenceEndpoints
             var mode = (calendar ?? "gregorian").Trim().ToLowerInvariant();
             if (mode is not ("gregorian" or "hijri" or "both")) return Results.BadRequest(new { error = "calendar must be gregorian, hijri or both." });
             await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
-            var page = await RegisterRowsAsync(db, ctx, config, tenantId, year, type, status, q, 0, 10_000, ct);
+            var page = await RegisterRowsAsync(db, ctx, config, tenantId, year, type, status, q, 0, 10_000, ct, typeCode);
             var offset = UtcOffset(config);
             var table = page.Items.Select(r => new Dictionary<string, object?>
             {
@@ -54,6 +54,7 @@ public static class CorrespondenceEndpoints
                 ["confidential"] = r.IsConfidential, ["created_at"] = r.CreatedAt,
                 ["to"] = string.Join("; ", r.Recipients.Where(x => x.Kind == nameof(RecipientKind.To)).Select(x => x.DisplayName)),
                 ["cc"] = string.Join("; ", r.Recipients.Where(x => x.Kind == nameof(RecipientKind.Cc)).Select(x => x.DisplayName)),
+                ["type_code"] = r.TypeCode,   // added last so the columns before it keep their positions
             }).ToList();
             var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(ReportEndpoints.ToCsv(ReportEndpoints.WithCalendar(table, mode, offset)))).ToArray();
             return Results.File(bytes, "text/csv; charset=utf-8", $"correspondence-register-{year?.ToString() ?? "all"}.csv");
@@ -73,7 +74,9 @@ public static class CorrespondenceEndpoints
 
         corr.MapPost("/", async (AppDbContext db, HttpContext ctx, IConfiguration config, CreateCorrespondenceReq req, CancellationToken ct) =>
         {
-            if (!ctx.User.HasPermission("correspondence:create")) return Results.Forbid();
+            // A typed letter is allowed by the permission its type names (for example students may start only a student request);
+            // a letter with no type needs the general permission, as before.
+            if (!ctx.User.HasPermission("correspondence:create") && string.IsNullOrWhiteSpace(req.TypeCode)) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (req.IsConfidential && !ctx.User.HasPermission("correspondence:confidential"))
                 return Results.Forbid();
@@ -89,13 +92,28 @@ public static class CorrespondenceEndpoints
             try { c = Correspondence.Create(req.TenantId, type, req.Subject, req.Content, req.AuthorId, priority, req.IsConfidential, req.ParentCorrespondenceId); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+            CorrespondenceTypeDef? typeDef = null;
+            if (!string.IsNullOrWhiteSpace(req.TypeCode))
+            {
+                var code = req.TypeCode.Trim().ToUpperInvariant();
+                typeDef = await db.CorrespondenceTypes.FirstOrDefaultAsync(t => t.TenantId == req.TenantId && t.Code == code, ct);
+                if (typeDef is null || !typeDef.IsActive) return Results.BadRequest(new { error = "Unknown or inactive correspondence type." });
+                if (!ctx.User.HasPermission(typeDef.CreatePermission)) return Results.Forbid();
+                // A restricted type (for example a student request) is always written as the caller, never on someone else's behalf.
+                if (typeDef.CreatePermission != "correspondence:create" && await ActingPersonAsync(db, ctx, req.TenantId, ct) != req.AuthorId) return Results.Forbid();
+                if (typeDef.RequiresTargetUnit && req.TargetUnitId is null) return Results.BadRequest(new { error = $"{typeDef.NameEn} needs the receiving unit (targetUnitId)." });
+                if (typeDef.RequiresAmount && req.Amount is not > 0) return Results.BadRequest(new { error = $"{typeDef.NameEn} needs an amount greater than zero." });
+            }
+            if (req.Amount is < 0 or > 1_000_000_000m) return Results.BadRequest(new { error = "Amount must be between 0 and 1,000,000,000." });
+            if (req.TargetUnitId is { } unitId && !await db.OrganizationalUnits.AnyAsync(u => u.TenantId == req.TenantId && u.Id == unitId && u.IsActive, ct))
+                return Results.BadRequest(new { error = "The receiving unit was not found in this tenant." });
             if (req.ParentCorrespondenceId.HasValue && !await db.Correspondences.AnyAsync(x => x.TenantId == req.TenantId && x.Id == req.ParentCorrespondenceId.Value
                     && (!x.IsConfidential || CanSeeConfidential(ctx.User)), ct))
                 return Results.NotFound(new { error = "Parent correspondence not found." });
             // One register per direction and year, as official correspondence is kept: IN-2026-000001, OUT-2026-000001, INT-2026-000001.
             var numberYear = LocalYear(config, c.CreatedAt);
             var seq = await Sequences.NextAsync(db, req.TenantId, $"correspondence:{type}:{numberYear}", ct);
-            c = c with { Number = $"{Prefix(type)}-{numberYear}-{seq:D6}" };
+            c = c with { Number = $"{Prefix(type)}-{numberYear}-{seq:D6}", TypeCode = typeDef?.Code, TargetUnitId = req.TargetUnitId, Amount = req.Amount };
             db.Correspondences.Add(c);
             foreach (var r in req.Recipients ?? [])
             {
@@ -261,14 +279,15 @@ public static class CorrespondenceEndpoints
 
     public sealed record RegisterRecipient(string DisplayName, bool IsExternal, string Kind);
     public sealed record RegisterRow(Guid Id, string Number, string Type, string Subject, string Status, string Priority, bool IsConfidential,
-        DateTimeOffset CreatedAt, Guid AuthorId, Guid? ParentCorrespondenceId, List<RegisterRecipient> Recipients);
+        DateTimeOffset CreatedAt, Guid AuthorId, Guid? ParentCorrespondenceId, List<RegisterRecipient> Recipients, string? TypeCode = null);
     public sealed record RegisterPage(int Total, int Skip, int Take, List<RegisterRow> Items);
 
     /// <summary>Call inside a TenantScope. Newest first within the year, like a physical register read from the top.</summary>
     private static async Task<RegisterPage> RegisterRowsAsync(AppDbContext db, HttpContext ctx, IConfiguration config, Guid tenantId, int? year,
-        string? type, string? status, string? q, int skip, int take, CancellationToken ct)
+        string? type, string? status, string? q, int skip, int take, CancellationToken ct, string? typeCode = null)
     {
         var query = db.Correspondences.Where(c => c.TenantId == tenantId);
+        if (!string.IsNullOrWhiteSpace(typeCode)) { var tc = typeCode.Trim().ToUpperInvariant(); query = query.Where(c => c.TypeCode == tc); }
         if (!CanSeeConfidential(ctx.User)) query = query.Where(c => !c.IsConfidential);
         if (year is { } y)
         {
@@ -292,7 +311,7 @@ public static class CorrespondenceEndpoints
         var items = page.Select(c => new RegisterRow(c.Id, c.Number, c.Type.ToString(), c.Subject, c.Status.ToString(), c.Priority.ToString(), c.IsConfidential,
             c.CreatedAt, c.AuthorId, c.ParentCorrespondenceId,
             people.Where(x => x.CorrespondenceId == c.Id).OrderBy(x => x.Kind).ThenBy(x => x.DisplayName)
-                .Select(x => new RegisterRecipient(x.DisplayName, x.IsExternal, x.Kind.ToString())).ToList())).ToList();
+                .Select(x => new RegisterRecipient(x.DisplayName, x.IsExternal, x.Kind.ToString())).ToList(), c.TypeCode)).ToList();
         return new RegisterPage(total, skip, take, items);
     }
 }

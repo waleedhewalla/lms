@@ -21,6 +21,8 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 ## R2 implemented
 - `GET /api/correspondence?tenantId=&status=` (`correspondence:read`; confidential filtered without `correspondence:confidential`)
 - `POST /api/correspondence` (`correspondence:create`; reserves `IN|OUT|INT-yyyy-nnnnnn`; recipients have `kind` To|Cc)
+- Correspondence types (the university's catalogue): `GET /api/correspondence/types?tenantId=&includeInactive=` (readers see all active types; anyone else sees the types whose permission they hold; `includeInactive` is for `workflow:manage`), `POST /api/correspondence/types` and `PATCH /api/correspondence/types/{id}` (`workflow:manage`; the code never changes; `createPermission` is `correspondence:create` or `correspondence:student-request`), `POST /api/correspondence/types/seed-defaults` (creates the nine standard types that are missing; edits are kept).
+- `POST /api/correspondence` also takes `typeCode`, `targetUnitId` and `amount` (all optional; a typed letter must meet its type: the permission it names, a receiving unit and/or an amount where the type requires them; the register shows `typeCode` and filters by it; the export gains a `type_code` column added last, so the existing columns keep their positions).
 - `GET /api/correspondence/register?tenantId=&year=&type=&status=&q=&skip=&take=` (`correspondence:read`; newest first, recipients included, no letter body; confidential letters only for `correspondence:confidential`)
 - `GET /api/correspondence/register/export?...&calendar=gregorian|hijri|both` (CSV, same filters)
 - `POST /api/correspondence/{id}/submit` (Draft→Submitted + approval + task + event)

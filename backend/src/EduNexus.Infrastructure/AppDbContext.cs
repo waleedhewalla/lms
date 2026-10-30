@@ -51,6 +51,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<PolicyQuizQuestion> PolicyQuizQuestions => Set<PolicyQuizQuestion>();
     public DbSet<CalendarFeedToken> CalendarFeedTokens => Set<CalendarFeedToken>();
     public DbSet<ConnectorConfig> ConnectorConfigs => Set<ConnectorConfig>();
+    public DbSet<CorrespondenceTypeDef> CorrespondenceTypes => Set<CorrespondenceTypeDef>();
     public DbSet<ExternalCourse> ExternalCourses => Set<ExternalCourse>();
     public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
     public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
@@ -175,6 +176,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(x => x.Type).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Priority).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.TypeCode).HasMaxLength(40);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.TenantId, x.TypeCode });
         });
         b.Entity<Correspondent>(e =>
         {
@@ -290,6 +294,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             // One row per attestation; a person re-attests on a new version or cycle.
             e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId, x.PolicyVersion });
             e.Property(x => x.PolicyVersion).HasDefaultValue(1);
+        });
+        b.Entity<CorrespondenceTypeDef>(e =>
+        {
+            e.ToTable("CorrespondenceTypes");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            e.Property(x => x.Code).HasMaxLength(40).IsRequired();
+            e.Property(x => x.NameEn).HasMaxLength(120).IsRequired();
+            e.Property(x => x.NameAr).HasMaxLength(120).IsRequired();
+            e.Property(x => x.Purpose).HasMaxLength(500).IsRequired();
+            e.Property(x => x.SenderDescription).HasMaxLength(300).IsRequired();
+            e.Property(x => x.ReceiverDescription).HasMaxLength(300).IsRequired();
+            e.Property(x => x.CreatePermission).HasMaxLength(60).IsRequired();
+            e.Property(x => x.WorkflowCode).HasMaxLength(60);
         });
         b.Entity<ConnectorConfig>(e =>
         {
