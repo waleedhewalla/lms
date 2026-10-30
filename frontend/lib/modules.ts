@@ -60,6 +60,8 @@ export const MODULES: Module[] = [
 
   { href: "/directory", icon: "people", tone: "blue", group: "admin", perms: ["person:read"],
     en: ["Directory", "People, departments and structure."], ar: ["الدليل", "الأشخاص والأقسام والهيكل."] },
+  { href: "/connectors", icon: "globe", tone: "teal", group: "admin", perms: ["integration:read", "integration:manage", "integration:admin", "integration:write"],
+    en: ["Connected systems", "Course catalogue from your learning or student system."], ar: ["الأنظمة المرتبطة", "فهرس المقررات من نظام التعلم أو شؤون الطلاب."] },
   { href: "/roles", icon: "key", tone: "violet", group: "admin", perms: ["role:read", "role:assign"],
     en: ["Roles & Access", "Roles, assignments and delegations."], ar: ["الأدوار والصلاحيات", "الأدوار والإسناد والتفويض."] },
   { href: "/audit", icon: "history", tone: "amber", group: "admin", perms: ["audit:read"],
