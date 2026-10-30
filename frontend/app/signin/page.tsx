@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { oidcEnabled } from "../../lib/config";
+import { createDemoTenant, mintDevToken } from "../../lib/devToken";
 import { signIn, signOut } from "../../lib/oidc";
 import { BrandMark, LandingIcon, type LandingIconName } from "../../components/LandingIcon";
 import { useSignedInName } from "../../components/PublicChrome";
@@ -31,6 +32,21 @@ export default function SignInPage() {
     setNext(safeNext(new URLSearchParams(window.location.search).get("next")));
     setSso(oidcEnabled());
   }, []);
+
+  const [devTenant, setDevTenant] = useState("");
+  const [devPerson, setDevPerson] = useState("");
+  useEffect(() => { try { setDevTenant(window.localStorage.getItem("edunexus.tenant") ?? ""); } catch { /* storage unavailable */ } }, []);
+  // Development only: the API mints a test token with every permission. A full page load starts the new session.
+  const devSignIn = async (createDemo: boolean) => {
+    setError(""); setBusy(true);
+    try {
+      const tenant = createDemo ? await createDemoTenant() : devTenant.trim();
+      const token = await mintDevToken(tenant, devPerson);
+      window.localStorage.setItem("edunexus.token", token);
+      window.localStorage.setItem("edunexus.tenant", tenant);
+      window.location.assign(next);
+    } catch (e) { setError(String(e)); setBusy(false); }
+  };
 
   const go = async () => {
     setError(""); setBusy(true);
@@ -69,9 +85,19 @@ export default function SignInPage() {
             </button>
           ) : (
             <div className="pub-note" role="note">
-              <b>{T("Single sign-on is not configured on this server.", "لم يُضبط الدخول الموحّد على هذا الخادم.")}</b>
-              <span>{T("In development, open the workspace and use the connection bar to mint a test token.", "في بيئة التطوير، افتح مساحة العمل واستخدم شريط الاتصال لإنشاء رمز تجريبي.")}</span>
-              <Link href={next} className="pub-btn pub-btn-primary pub-btn-block"><LandingIcon name="arrow" size={20} className="pub-flip" />{T("Open the workspace", "افتح مساحة العمل")}</Link>
+              <b>{T("Development sign-in", "تسجيل الدخول للتطوير")}</b>
+              <span>{T("Single sign-on is not configured on this server, so you can sign in with a test account that has every permission.",
+                       "لم يُضبط الدخول الموحّد على هذا الخادم، لذا يمكنك الدخول بحساب تجريبي يملك كل الصلاحيات.")}</span>
+              <div className="ws-devform">
+                <label htmlFor="dev-tenant">{T("Institution (tenant) ID", "معرّف المؤسسة")}</label>
+                <input id="dev-tenant" className="input" value={devTenant} onChange={(e) => setDevTenant(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
+                <label htmlFor="dev-person">{T("Act as person ID (optional)", "التصرف كشخص (اختياري)")}</label>
+                <input id="dev-person" className="input" value={devPerson} onChange={(e) => setDevPerson(e.target.value)} />
+              </div>
+              <button type="button" className="pub-btn pub-btn-primary pub-btn-block" disabled={busy || !devTenant.trim()} onClick={() => devSignIn(false)}>
+                <LandingIcon name="signin" size={20} />{T("Sign in (development)", "تسجيل الدخول (تطوير)")}</button>
+              <button type="button" className="pub-btn pub-btn-quiet pub-btn-block" disabled={busy} onClick={() => devSignIn(true)}>
+                {T("Create a demo institution and sign in", "إنشاء مؤسسة تجريبية وتسجيل الدخول")}</button>
             </div>)}
           {error && <p role="alert" className="pub-error">{error}</p>}
           <p className="pub-fine">

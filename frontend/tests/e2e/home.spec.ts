@@ -16,16 +16,28 @@ test('sign-in icon opens the sign-in page with role choices', async ({ page }) =
   await expect(page.getByRole('radio')).toHaveCount(4);
 });
 
-test('dashboard keeps the workspace layout', async ({ page }) => {
+/** A signed-in session for the browser: an unsigned token is enough for the UI (the API checks real ones). */
+async function signInAs(page: import('@playwright/test').Page, permission: string[]) {
+  const payload = Buffer.from(JSON.stringify({ sub: 'e2e', name: 'E2E User', permission, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+  await page.goto('/signin');
+  await page.evaluate((t) => localStorage.setItem('edunexus.token', t), `x.${payload}.y`);
+}
+
+test('workspace pages send signed-out visitors to sign in', async ({ page }) => {
   await page.goto('/dashboard');
-  await expect(page.locator('.sidebar')).toBeVisible();
-  await expect(page.locator('.glass-card')).toHaveCount(6);
-  await expect(page.getByRole('heading', { name: 'Directory', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/signin\?next=%2Fdashboard/);
 });
 
-test('navigation to roles page works', async ({ page }) => {
+test('dashboard shows only the modules the account can open', async ({ page }) => {
+  await signInAs(page, ['inbox:read', 'meeting:read', 'policy:read']);
   await page.goto('/dashboard');
-  await page.getByRole('link', { name: '🛡️ Roles & RBAC' }).click();
-  await expect(page).toHaveURL('/roles');
-  await expect(page.getByText('Connection (dev)')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('E2E User');
+  await expect(page.locator('.ws-module')).toHaveCount(5); // My Work, Meetings, Board, Policies, Settings
+  await expect(page.locator('.sidebar').getByRole('link', { name: 'Records Retention' })).toHaveCount(0);
+});
+
+test('a module the account cannot open says so', async ({ page }) => {
+  await signInAs(page, ['inbox:read']);
+  await page.goto('/records');
+  await expect(page.getByRole('alert')).toContainText("You don't have access to this module");
 });

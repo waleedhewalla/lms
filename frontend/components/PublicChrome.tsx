@@ -3,11 +3,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { claims } from "../lib/oidc";
+import { permissionsOf } from "../lib/modules";
 import { BrandMark, LandingIcon } from "./LandingIcon";
 import { useTranslation } from "./TranslationProvider";
 
 /** Pages a signed-out visitor can read: drawn with the public header and footer instead of the workspace sidebar. */
 export const PUBLIC_PATHS = ["/", "/signin", "/privacy"];
+
+/** Pages that must work without a session but are not part of the public site (the sign-in redirect lands here). */
+export const OPEN_PATHS = ["/auth/callback"];
 
 const NAV = [
   { href: "/#features", en: "Features", ar: "المزايا" },
@@ -16,14 +20,22 @@ const NAV = [
   { href: "/#trust", en: "Trust & compliance", ar: "الثقة والامتثال" },
 ];
 
-/** Who is signed in (from the stored, unexpired token), or null. */
-export function useSignedInName(): string | null | undefined {
-  const [name, setName] = useState<string | null | undefined>(undefined);
+export type Session = { name: string; perms: string[] };
+
+/** The signed-in session from the stored, unexpired token: undefined while loading, null when signed out. */
+export function useSession(): Session | null | undefined {
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
   useEffect(() => {
     const c = claims();
-    setName(c ? String(c.name ?? c.preferred_username ?? c.email ?? c.sub ?? "") || "—" : null);
+    setSession(c ? { name: String(c.name ?? c.preferred_username ?? c.email ?? c.sub ?? "") || "—", perms: permissionsOf(c) } : null);
   }, []);
-  return name;
+  return session;
+}
+
+/** Who is signed in, or null. */
+export function useSignedInName(): string | null | undefined {
+  const s = useSession();
+  return s === undefined ? undefined : s?.name ?? null;
 }
 
 function useL() {
