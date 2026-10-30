@@ -164,6 +164,11 @@ Feature-complete release of the delivery plan (Waves A–G).
 - The credential field is a password box; after saving it is never shown again. A failed read shows the server's own explanation (for example "the server refused the credential (401)" or "could not be reached") and the last good catalogue stays. A rejected CSV names the rows at fault.
 - When connectors are off on the server, the page says so and shows nothing else.
 
+## Message-broker login (Helm)
+- The chart never set a login for RabbitMQ, so the broker and the API both used the stock `guest/guest` account, which anyone who could reach the broker inside the cluster could use, even though the production checklist said to replace the RabbitMQ secret.
+- New value `rabbitmq.auth.secretName`: name a Secret with `username` and `password` (`AIRGAP.md` has the command) and the broker creates that login instead of `guest`, and the API uses it. Left empty (the default), nothing changes, so existing installs keep working; set it before real data goes in, and combine it with `networkPolicy.enabled`.
+- CI renders the chart both ways: nothing about it by default, and with the Secret named both the broker and the API reference it.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

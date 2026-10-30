@@ -39,6 +39,12 @@ spec:
             {{- else }}
             - { name: RabbitMQ__Port, value: {{ .Values.api.rabbitmq.port | quote }} }
             {{- end }}
+            {{- if .Values.rabbitmq.auth.secretName }}
+            - name: RabbitMQ__Username
+              valueFrom: { secretKeyRef: { name: {{ .Values.rabbitmq.auth.secretName }}, key: username } }
+            - name: RabbitMQ__Password
+              valueFrom: { secretKeyRef: { name: {{ .Values.rabbitmq.auth.secretName }}, key: password } }
+            {{- end }}
             - { name: Storage__Endpoint, value: {{ .Values.api.storage.endpoint | quote }} }
             - { name: Storage__AccessKey, value: minio }
             - name: Storage__SecretKey
