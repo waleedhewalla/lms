@@ -152,6 +152,13 @@ Feature-complete release of the delivery plan (Waves A–G).
 - The copy and the list are removed on sign-out, when a different person signs in, after 7 days, and by "Clear offline copy".
 - The service worker now also keeps the empty page shells of My Work and the module launcher and the runtime settings script (a test checks the built pages hold no personal data). The API and the identity provider are still never cached.
 
+## Learning and student-information system connectors (backend)
+- New, off by default (`Connectors__Enabled`): read-only links that bring the **course catalogue** of Moodle, Canvas, Sakai or Banner (Ethos) into EduNexus, plus a CSV import for any other system or for sites that prefer not to give a credential. EduNexus stays the governance layer beside those systems.
+- Only courses are read: code, title, term, dates, a head count where the system reports one, and instructor names. No students, grades or submissions. A course the system stops listing is marked inactive, not deleted; a failed read keeps the last good catalogue and reports why (502 with a message, last result on the connector).
+- Credentials are sealed at rest (AES-256-GCM, key `Connectors__SecretKey`, bound to the tenant and connector), never returned, and the other system is called without holding a database transaction. Addresses pass the webhook guard (no internal addresses unless `Integrations__AllowPrivateTargets`), redirects and cross-server next-page links are not followed, answers are size- and count-capped. Moodle's token goes in the request body, not the address.
+- Two new tenant-isolated tables (`ConnectorConfigs`, `ExternalCourses`); additive migration. The Helm chart gains `api.connectors.enabled` (reads the key from the api Secret).
+- **Not yet validated against a live system.** The four clients are tested against sample answers shaped like each system's documented API. Run each once against the pilot's own system; Sakai and Banner differ most between versions and give no counts or instructors. The screen for this comes in the next change; until then it is used through the API.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

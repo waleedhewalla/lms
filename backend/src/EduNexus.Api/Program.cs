@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using EduNexus.Api;
 using EduNexus.Api.AI;
 using EduNexus.Api.Auth;
+using EduNexus.Api.Connectors;
 using EduNexus.Api.Endpoints;
 using EduNexus.Api.Events;
 using EduNexus.Api.Integrations;
@@ -113,6 +114,9 @@ builder.Services.AddSingleton(sp => new TextGenerator(
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiOptions>>().Value,
     sp.GetRequiredService<ILogger<TextGenerator>>()));
 builder.Services.AddHostedService<IntegrationDispatcher>();
+// LMS / student-information connectors (off unless Connectors:Enabled): sealed credentials and a pluggable client per system.
+builder.Services.AddSingleton<EduNexus.Api.Connectors.SecretBox>();
+builder.Services.AddSingleton<EduNexus.Api.Connectors.ICatalogClients, EduNexus.Api.Connectors.CatalogClients>();
 
 // --- Observability: traces (OTLP, collector optional) + Prometheus metrics on /metrics ---
 builder.Services.AddOpenTelemetry()
@@ -198,6 +202,7 @@ app.MapWorkEndpoints();
 app.MapReportEndpoints();
 app.MapGovernanceDepthEndpoints();
 app.MapCalendarFeedEndpoints();
+app.MapConnectorEndpoints();
 app.MapAiGovernanceEndpoints();
 app.MapRecordsEndpoints();
 app.MapPrivacyEndpoints();

@@ -410,6 +410,22 @@ public sealed record CalendarEvent(
 public sealed record CalendarFeedToken(Guid Id, Guid TenantId, Guid PersonId, string TokenHash, DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt, DateTimeOffset? LastUsedAt = null, DateTimeOffset? RevokedAt = null);
 
+/// <summary>
+/// The systems a course catalogue can be read from. Csv is for any other system: an export loaded by hand.
+/// </summary>
+public enum ConnectorSystem { Moodle, Canvas, Sakai, Banner, Csv }
+
+/// <summary>
+/// A read-only link to a learning or student-information system. Only the course catalogue is read (see <see cref="ExternalCourse"/>);
+/// never students, grades or submissions. The credential is stored sealed (encrypted with the deployment's key) and is never returned.
+/// </summary>
+public sealed record ConnectorConfig(Guid Id, Guid TenantId, ConnectorSystem System, string Name, string? BaseUrl, string? CredentialSealed,
+    string OptionsJson, bool IsActive, DateTimeOffset CreatedAt, DateTimeOffset? LastSyncAt = null, string? LastSyncStatus = null, string? LastSyncMessage = null);
+
+/// <summary>A course as the external system lists it. Counts only: no student is named. Courses that disappear are marked inactive, not deleted.</summary>
+public sealed record ExternalCourse(Guid Id, Guid TenantId, Guid ConnectorId, string ExternalId, string Code, string Title, string? Term,
+    DateTimeOffset? StartsOn, DateTimeOffset? EndsOn, int? EnrolledCount, string InstructorNames, bool IsActive, DateTimeOffset SyncedAt);
+
 public enum MinutesStatus { Draft, Submitted, Approved }
 
 /// <summary>Versioned meeting minutes (BBP §8.14): each save is a new version; one version gets approved.</summary>

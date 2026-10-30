@@ -2,6 +2,7 @@ using EduNexus.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using EduNexus.Api.Connectors;
 using EduNexus.Api.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -20,6 +21,12 @@ public sealed class EduNexusFactory : WebApplicationFactory<Program>
     /// <summary>The storage every test talks to: an in-memory fake, so no test depends on a MinIO server.</summary>
     public FakeObjectStorage Storage { get; } = new();
 
+    /// <summary>The other systems every connector test talks to: scripted, so no test needs a Moodle or a Canvas.</summary>
+    public FakeCatalogClients Catalogs { get; } = new();
+
+    /// <summary>A fixed key for sealing connector credentials in tests (32 bytes, base64).</summary>
+    public const string TestSecretKey = "dGVzdC1rZXktdGVzdC1rZXktdGVzdC1rZXktMTIzNDU=";
+
     public EduNexusFactory()
     {
         Environment.SetEnvironmentVariable("EDUNEXUS_CONNECTION", TestConnection);
@@ -34,7 +41,11 @@ public sealed class EduNexusFactory : WebApplicationFactory<Program>
         {
             s.RemoveAll<IObjectStorage>();
             s.AddSingleton<IObjectStorage>(Storage);
+            s.RemoveAll<ICatalogClients>();
+            s.AddSingleton<ICatalogClients>(Catalogs);
         });
+        builder.UseSetting("Connectors:Enabled", "true");
+        builder.UseSetting("Connectors:SecretKey", TestSecretKey);
         // The suite fires bursts of calls as one test identity; dedicated tests cover the limiter with low limits.
         builder.UseSetting("RateLimiting:PermitsPerMinute", "100000");
         builder.UseSetting("RateLimiting:ExpensivePermitsPerMinute", "100000");

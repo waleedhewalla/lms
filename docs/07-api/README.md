@@ -155,6 +155,7 @@ Delegation needs a deputy in the same tenant other than yourself. Dev tokens acc
   `approval-bottlenecks`, `workflow-cycle-time`, `committees`, `decisions`, `policies`
 
 ## Wave C — R0.2 governance depth (migration `R15GovernanceDepth`, RLS on all new tables)
+- Connectors (`integration:read|manage`, off unless `Connectors:Enabled`): `GET|POST /api/connectors`, `DELETE /api/connectors/{id}`, `POST /api/connectors/{id}/sync` (live systems: Moodle, Canvas, Sakai, Banner), `POST /api/connectors/{id}/import` (a Csv connector), `GET /api/connectors/courses?connectorId=&q=&active=&skip=&take=`. The credential is sealed and never returned.
 - Calendar (`calendar:read|manage`): `GET/POST /api/calendar/events`, `PATCH/DELETE /api/calendar/events/{id}`, `GET /api/calendar/export.ics`.
   Personal subscription (`calendar:read`, needs a person-linked account): `GET|POST|DELETE /api/calendar/feed-token` (status, issue-and-replace, revoke); the link itself is `GET /api/calendar/feed/{token}.ics`, anonymous, secret in the path, 404 for any wrong, expired, revoked or foreign link.
   The feed merges stored events with meetings, policy reviews and open decision-action deadlines.

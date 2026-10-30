@@ -83,6 +83,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
   - rate limiting: 600 requests a minute per user, plus 60 a minute on expensive endpoints;
   - an SSRF guard on outbound webhooks (internal addresses blocked at registration and at connect time).
 - Network segmentation and the firewall are the operator's.
+- Optional read-only links to a learning or student-information system bring in the course catalogue only (code, title, term, dates, a head count, instructor names): no student records, grades or submissions, which keeps pupil data out of EduNexus. Credentials for those systems are sealed at rest with a key the operator holds, and outbound calls pass the same internal-address guard as webhooks.
 
 **Data and information protection in detail:**
 - **Tenant isolation:** PostgreSQL row-level security, `FORCE`d on every tenant table, plus a cross-tenant token check on every request. Both are covered by tests.

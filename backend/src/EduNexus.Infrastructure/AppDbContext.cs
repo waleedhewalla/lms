@@ -50,6 +50,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ResolutionVote> ResolutionVotes => Set<ResolutionVote>();
     public DbSet<PolicyQuizQuestion> PolicyQuizQuestions => Set<PolicyQuizQuestion>();
     public DbSet<CalendarFeedToken> CalendarFeedTokens => Set<CalendarFeedToken>();
+    public DbSet<ConnectorConfig> ConnectorConfigs => Set<ConnectorConfig>();
+    public DbSet<ExternalCourse> ExternalCourses => Set<ExternalCourse>();
     public DbSet<AiInteraction> AiInteractions => Set<AiInteraction>();
     public DbSet<IntegrationEndpoint> IntegrationEndpoints => Set<IntegrationEndpoint>();
     public DbSet<IntegrationDelivery> IntegrationDeliveries => Set<IntegrationDelivery>();
@@ -288,6 +290,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             // One row per attestation; a person re-attests on a new version or cycle.
             e.HasIndex(x => new { x.TenantId, x.PolicyId, x.PersonId, x.PolicyVersion });
             e.Property(x => x.PolicyVersion).HasDefaultValue(1);
+        });
+        b.Entity<ConnectorConfig>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+            e.Property(x => x.System).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            e.Property(x => x.BaseUrl).HasMaxLength(500);
+            e.Property(x => x.CredentialSealed).HasMaxLength(4000);
+            e.Property(x => x.OptionsJson).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.LastSyncStatus).HasMaxLength(20);
+            e.Property(x => x.LastSyncMessage).HasMaxLength(500);
+        });
+        b.Entity<ExternalCourse>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.ConnectorId, x.ExternalId }).IsUnique();
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Code).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(400).IsRequired();
+            e.Property(x => x.Term).HasMaxLength(100);
+            e.Property(x => x.InstructorNames).HasMaxLength(1000).IsRequired();
         });
         b.Entity<CalendarFeedToken>(e =>
         {
