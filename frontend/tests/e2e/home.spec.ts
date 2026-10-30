@@ -39,5 +39,5 @@ test('dashboard shows only the modules the account can open', async ({ page }) =
 test('a module the account cannot open says so', async ({ page }) => {
   await signInAs(page, ['inbox:read']);
   await page.goto('/records');
-  await expect(page.getByRole('alert')).toContainText("You don't have access to this module");
+  await expect(page.locator('.ws-denied')).toContainText("You don't have access to this module");
 });

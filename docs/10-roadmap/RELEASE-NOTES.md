@@ -120,6 +120,13 @@ Feature-complete release of the delivery plan (Waves A–G).
 - CI: the chart is rendered in both modes and checked for any plaintext path; a new `tls-integration` job tests Postgres and Redis with a private CA (right CA, wrong CA, plaintext refused).
 - Known limits: server authentication only; OpenSearch is behind a TLS proxy rather than its security plugin; the ingress to web/API hop and the identity provider are the operator's. Not exercised end to end in CI: RabbitMQ, MinIO and OpenSearch run the same trust code (tested with a real TLS listener) but are not started with TLS in CI, and the chart has not been installed on a live cluster.
 
+## Installable app (PWA), part 1: app shell
+- The web app can now be installed to a phone's home screen or a desktop (manifest, icons, `start_url` = the module launcher).
+- A small service worker shows a bilingual "You are offline" page instead of the browser's error when the network is gone. It stores only the offline page, the icons and the build's hashed static files. It never stores pages, API responses or tokens, so nothing personal is left on a shared device.
+- The worker script and the offline page are always revalidated, so a fix reaches installed apps on the next visit. Not registered in development.
+- Not yet: reading the inbox or approving while offline. That needs a decision on keeping personal data on the device (part 2, behind a switch, off by default).
+- Fixed an end-to-end test from the module launcher work that matched Next's route announcer as well as the no-access panel.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
