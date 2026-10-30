@@ -76,6 +76,12 @@ export function permissionsOf(claims: Record<string, unknown> | null): string[] 
   return Array.isArray(p) ? p.map(String) : typeof p === "string" ? [p] : [];
 }
 
+/** The directory person this account acts as (the token's person_id claim), or null when the account is not linked to one. */
+export function personIdOf(claims: Record<string, unknown> | null): string | null {
+  const v = claims?.person_id;
+  return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : null;
+}
+
 export const canOpen = (m: Module, perms: string[]) => m.perms.length === 0 || m.perms.some((p) => perms.includes(p));
 
 /** The module a path belongs to (e.g. "/meetings/123" → Meetings), if any. */

@@ -133,6 +133,12 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Recipients can be To or Cc (copy). Existing recipients are To. One new column, no data change.
 - **Security fix:** the thread and routing-slip endpoints did not apply the confidential check that the list and detail endpoints do, so a user without `correspondence:confidential` could read a confidential letter's content and directives through them, or attach a reply to it. All correspondence routes now treat a confidential letter as not found unless the caller is cleared, and a thread stops where the caller's clearance does.
 
+## Correspondence screen on the real API
+- The Correspondence page used to run on demo data and placeholder person IDs. It now reads and writes the real API: the register (year, direction, status, search, paging) with who the letter went to and who got a copy, new letters with external or directory recipients (To or Cc), replies that keep the thread, sending a draft for review (the reviewer decides in Approvals), directives (routing slips) with a forward-to person, and a CSV export with Gregorian and Hijri dates.
+- Letters are written as the person the signed-in account is linked to (the token's `person_id`); an unlinked account can read but not write, and the page says so.
+- The shared comments and activities panel (`Chatter`, also on Approvals and Meetings) defaulted to `http://localhost:5000` with no token, so it only worked on a developer machine. It now uses the app's API address and the signed-in token.
+- Removed the Correspondence translation strings the old screen used.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
