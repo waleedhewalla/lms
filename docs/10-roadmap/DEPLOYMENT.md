@@ -45,7 +45,7 @@ Other IdPs: create a **public** client for the web app:
 | `ForwardedHeaders__KnownNetworks__0..n` | CIDRs of proxies whose `X-Forwarded-For` is trusted; default loopback + private ranges |
 | `EDUNEXUS_OFFLINE_DATA` (web container) | `true` lets My Work be read and acted on without a connection: a small copy (counts, what is waiting for the person to approve, their open tasks; no letter text, notification bodies or tokens) is kept in the browser on that device, and approvals or task completions made offline wait until the person reviews and sends them. Off by default; nothing is stored on devices when it is off. Turn it on only where devices are managed and disk-encrypted. The copy is removed on sign-out, when another person signs in, after 7 days, and by a "Clear offline copy" button |
 | `Metrics__AllowExternal` | `/metrics` is served only to loopback/private callers unless `true` |
-| `RabbitMQ__Host/Port/Username/Password` | message broker |
+| `RabbitMQ__Host/Port/Username/Password` | message broker. Defaults to the stock `guest/guest`; the Helm chart sets the username and password from a Secret when `rabbitmq.auth.secretName` is set (the same Secret gives the broker its login) |
 | `RabbitMQ__Tls`, `RabbitMQ__TlsServerName` | connect to the broker over TLS (port 5671 on the chart); the certificate must carry `TlsServerName`, default `RabbitMQ__Host`. Checked against `Tls__CaFile` when set |
 | `Tls__CaFile` | path of the site CA certificate (PEM). When set, the API checks the certificates of Postgres (`SSL Mode=VerifyFull`, unless the connection string chooses otherwise), RabbitMQ, MinIO (`Storage__Secure=true`), OpenSearch (https URL) and Redis (`ssl=true`) against that CA and the host name, and ignores the system roots for them. The Helm chart sets it with `tls.enabled`. Unset: nothing changes |
 | `AI__OpenSearchUser`, `AI__OpenSearchPassword` | basic-auth login for an OpenSearch you secure yourself (optional; the chart's OpenSearch uses no login) |
@@ -146,7 +146,7 @@ Brings the **course catalogue** (code, title, term, dates, enrolment count, inst
 ## 6. Production checklist
 
 - [ ] `ASPNETCORE_ENVIRONMENT=Production`, OIDC authority set, dev token disabled (the API enforces this).
-- [ ] Every secret replaced (Postgres, MinIO, RabbitMQ, AI key); none committed.
+- [ ] Every secret replaced (Postgres, MinIO, RabbitMQ, AI key); none committed. For RabbitMQ on the Helm chart: create the `edunexus-rabbitmq` Secret (`username`, `password`) and install with `rabbitmq.auth.secretName`; without it the broker and the API both use the stock `guest/guest` login.
 - [ ] TLS on web, API and IdP; `Cors__AllowedOrigins` set to the web origin only.
 - [ ] Backups scheduled and a restore drill done.
 - [ ] Pen-test findings (GA gate 14) closed.

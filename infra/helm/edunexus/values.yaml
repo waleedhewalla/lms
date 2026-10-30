@@ -81,7 +81,14 @@ tls:
 networkPolicy:
   enabled: false
 redis: { image: redis:7, storage: 5Gi }
-rabbitmq: { image: rabbitmq:3-management }
+rabbitmq:
+  image: rabbitmq:3-management
+  # Login for the message broker. Empty (the default, so existing installs keep working) leaves the stock guest/guest
+  # account, which anyone who can reach the broker inside the cluster can use. Set it to the name of a Secret with the
+  # keys `username` and `password` (see AIRGAP.md) and the broker and the API both use that login instead. Strongly
+  # recommended before real data goes in; combine with networkPolicy.enabled.
+  auth:
+    secretName: ""
 minio: { image: minio/minio, storage: 50Gi }
 opensearch: { image: opensearchproject/opensearch:2, storage: 20Gi }
 prometheus: { image: prom/prometheus:v3.1.0 }

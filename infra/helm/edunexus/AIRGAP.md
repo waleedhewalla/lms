@@ -19,6 +19,10 @@
 #      PGPASS=$(openssl rand -base64 24)
 #      kubectl -n edunexus create secret generic edunexus-postgres --from-literal=password=$PGPASS
 #      kubectl -n edunexus create secret generic edunexus-minio --from-literal=root-password=$(openssl rand -base64 24)
+#      # Optional but recommended: a login for the message broker (otherwise the stock guest/guest account is used).
+#      kubectl -n edunexus create secret generic edunexus-rabbitmq \
+#        --from-literal=username=edunexus --from-literal=password=$(openssl rand -base64 24)
+#      #   then install with: --set rabbitmq.auth.secretName=edunexus-rabbitmq
 #      kubectl -n edunexus create secret generic edunexus-api \
 #        --from-literal=connection="Host=edunexus-postgres;Port=5432;Database=edunexus;Username=edunexus;Password=$PGPASS" \
 #        --from-literal=ai-api-key=""   # optional, only for AI.Provider=OpenAI

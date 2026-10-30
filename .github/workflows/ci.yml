@@ -174,6 +174,13 @@ jobs:
           # Off by default: nothing about TLS leaks into a normal install.
           ! grep -Eq 'edunexus-tls-|Tls__CaFile|RabbitMQ__Tls|kind: Certificate|ssl=on' /tmp/default.yaml
           grep -q 'RabbitMQ__Port, value: "5672"' /tmp/default.yaml
+          # Message-broker login: stock guest account by default; with a Secret named, the broker and the API both use it.
+          ! grep -q 'RABBITMQ_DEFAULT_USER' /tmp/default.yaml
+          ! grep -q 'RabbitMQ__Username' /tmp/default.yaml
+          helm template edunexus infra/helm/edunexus --set rabbitmq.auth.secretName=edunexus-rabbitmq-login > /tmp/mq-auth.yaml
+          test "$(grep -c 'name: edunexus-rabbitmq-login' /tmp/mq-auth.yaml)" = 4
+          grep -q 'RABBITMQ_DEFAULT_PASS' /tmp/mq-auth.yaml
+          grep -q 'RabbitMQ__Password' /tmp/mq-auth.yaml
           # Connectors (LMS/SIS course catalogue): off by default; on, it needs the sealing key from the api Secret.
           ! grep -q 'Connectors__' /tmp/default.yaml
           helm template edunexus infra/helm/edunexus --set api.connectors.enabled=true > /tmp/connectors.yaml
