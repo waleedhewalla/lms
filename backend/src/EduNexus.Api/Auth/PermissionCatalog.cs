@@ -18,7 +18,7 @@ public static class PermissionCatalog
         "chatter:read", "chatter:write",
         "committee:create", "committee:read",
         "communication:create", "communication:read",
-        "correspondence:confidential", "correspondence:create", "correspondence:read",
+        "correspondence:confidential", "correspondence:create", "correspondence:read", "correspondence:student-request",
         "decision:create", "decision:read",
         "document:create", "document:manage", "document:read", "document:share", "document:update", "document:write",
         "form:manage", "form:read",

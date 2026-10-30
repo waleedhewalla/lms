@@ -169,6 +169,14 @@ Feature-complete release of the delivery plan (Waves A–G).
 - New value `rabbitmq.auth.secretName`: name a Secret with `username` and `password` (`AIRGAP.md` has the command) and the broker creates that login instead of `guest`, and the API uses it. Left empty (the default), nothing changes, so existing installs keep working; set it before real data goes in, and combine it with `networkPolicy.enabled`.
 - CI renders the chart both ways: nothing about it by default, and with the Secret named both the broker and the API reference it.
 
+## Correspondence types (step 1 of 3: the catalogue)
+- A university can now define the kinds of internal correspondence it runs. Nine standard types are created for a tenant by `POST /api/correspondence/types/seed-defaults` (safe to repeat; edits are kept): administrative memo, academic, financial, between departments, employee request, student request, decision, circular, and information request or complaint. Each has English and Arabic names, its purpose, who sends and receives, the permission needed to start one, and the workflow it will follow. The university can add types, rename them, switch them off and re-route them.
+- A letter can carry a `typeCode`, and where a type needs them, a receiving unit (`targetUnitId`) and an `amount` (financial). A letter without a type works exactly as before; the three directions (incoming, outgoing, internal) and the numbering are unchanged. The register filters and exports by type.
+- New permission `correspondence:student-request`: a student can start only a "student request", only as themselves, and no other kind of letter. The student request type is seeded switched off: students must not see anything but their own letters first, which is part of step 2.
+- **Not yet in this step:** the workflows themselves (steps and approvers per type, returning a letter for changes, closing it, deadlines in working days and the notifications). Sending a letter still creates the single review it did before. The type's `workflowCode` names the workflow that step 2 defines.
+- Data changes (additive only): new table `CorrespondenceTypes` (tenant-isolated); new nullable columns `TypeCode`, `TargetUnitId`, `Amount` on `Correspondences`; two new status values at the end of the list (`Returned`, `Closed`) that nothing uses yet.
+- **For the university to confirm before step 2:** the amount limits for financial correspondence at each level (provisional values will be set and are editable), who closes each type (the recipient, the author or records), and whether a letter returned for changes restarts the whole workflow (assumed) or resumes at the step that returned it.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

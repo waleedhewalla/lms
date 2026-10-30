@@ -106,13 +106,14 @@ public sealed class OutboxEvent
 
 public enum CorrespondenceType { Incoming, Outgoing, Internal }
 public enum CorrespondencePriority { Normal, High, Urgent }
-public enum CorrespondenceStatus { Draft, Submitted, InReview, Approved, Rejected, Archived }
+// Returned = sent back to its author for changes; Closed = finished, with a recorded reason. Added at the end so stored values keep their meaning.
+public enum CorrespondenceStatus { Draft, Submitted, InReview, Approved, Rejected, Archived, Returned, Closed }
 
 public sealed record Correspondence(
     Guid Id, Guid TenantId, string Number, CorrespondenceType Type,
     string Subject, string Content, Guid AuthorId, CorrespondencePriority Priority,
     bool IsConfidential, CorrespondenceStatus Status, DateTimeOffset CreatedAt,
-    Guid? ParentCorrespondenceId = null)
+    Guid? ParentCorrespondenceId = null, string? TypeCode = null, Guid? TargetUnitId = null, decimal? Amount = null)
 {
     public static Correspondence Create(Guid tenantId, CorrespondenceType type, string subject,
         string content, Guid authorId, CorrespondencePriority priority, bool isConfidential,
@@ -130,6 +131,15 @@ public sealed record Correspondence(
 
 /// <summary>To = the addressee who must act; Cc = receives a copy for information.</summary>
 public enum RecipientKind { To, Cc }
+
+/// <summary>
+/// A kind of internal correspondence the university defines (administrative memo, financial letter, student request, ...).
+/// It says who may start one, what it needs, and which workflow it follows. <see cref="Correspondence.TypeCode"/> points here;
+/// a letter without a type behaves exactly as before. Universities can rename, deactivate and re-route types.
+/// </summary>
+public sealed record CorrespondenceTypeDef(
+    Guid Id, Guid TenantId, string Code, string NameEn, string NameAr, string Purpose, string SenderDescription, string ReceiverDescription,
+    string CreatePermission, bool RequiresTargetUnit, bool RequiresAmount, string? WorkflowCode, bool IsActive, int SortOrder);
 
 public sealed record Correspondent(Guid Id, Guid TenantId, Guid CorrespondenceId, Guid? PersonId, string DisplayName, bool IsExternal,
     RecipientKind Kind = RecipientKind.To);
