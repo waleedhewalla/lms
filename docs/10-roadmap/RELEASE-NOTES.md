@@ -145,6 +145,13 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Anyone holding the link can read that person's calendar without signing in, so it should be treated like a password and used over https. All failures answer the same 404.
 - Personal-data erasure now also deletes the person's calendar links.
 
+## Offline My Work (installable app, part 2)
+- Off by default. A deployment turns it on with `EDUNEXUS_OFFLINE_DATA=true` on the web container. With it off, nothing is stored on devices and My Work only reports that you are offline.
+- With it on, My Work keeps a small copy on the device: counts, what is waiting for you to approve, and your open tasks (no letter text, notification bodies or tokens). Offline, the page opens from that copy with a banner. Access tokens last about 15 minutes and cannot be renewed offline, so My Work (and only My Work) opens offline even after the token has expired.
+- Approving, rejecting or completing a task offline puts the action in a "Waiting to be sent" list. Nothing is sent automatically: after coming back online and signing in, the person reviews the list and presses "Send now" (this stops anyone else on a shared device from quietly acting in your name). The server checks each action again exactly as for an action taken online: one already decided by someone else, or no longer allowed, is dropped and reported, not retried.
+- The copy and the list are removed on sign-out, when a different person signs in, after 7 days, and by "Clear offline copy".
+- The service worker now also keeps the empty page shells of My Work and the module launcher and the runtime settings script (a test checks the built pages hold no personal data). The API and the identity provider are still never cached.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
