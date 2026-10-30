@@ -1,7 +1,11 @@
 "use client";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { config } from "../lib/config";
+import { signOut } from "../lib/oidc";
+import { BrandMark, LandingIcon } from "./LandingIcon";
+import { PUBLIC_PATHS, PublicFooter, PublicHeader, useSignedInName } from "./PublicChrome";
 import { useTranslation } from "./TranslationProvider";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -9,13 +13,28 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const L = (en: string, ar: string) => (locale === "ar" ? ar : en);
   const [grafanaUrl, setGrafanaUrl] = useState("");
   useEffect(() => setGrafanaUrl(config().grafanaUrl), []);
+  const pathname = usePathname();
+  const user = useSignedInName();
+
+  // Public pages (home, sign-in, privacy notice) get the marketing header and footer, not the workspace sidebar.
+  if (PUBLIC_PATHS.includes(pathname)) {
+    return (
+      <div className="pub-page">
+        <PublicHeader />
+        <main id="main" className={pathname === "/" ? undefined : "pub-main"}>{children}</main>
+        <PublicFooter />
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
       <aside className="sidebar">
-        <h2>{t("app.title")}</h2>
+        <Link href="/" className="sidebar-brand" aria-label={L("EduNexus home", "EduNexus — الصفحة الرئيسية")}>
+          <BrandMark size={30} /><h2>{t("app.title")}</h2>
+        </Link>
         <nav style={{ flex: 1 }}>
-          <Link href="/" className="nav-link">{t("nav.dashboard")}</Link>
+          <Link href="/dashboard" className="nav-link">{t("nav.dashboard")}</Link>
           <Link href="/directory" className="nav-link">{t("nav.directory")}</Link>
           <Link href="/roles" className="nav-link">{t("nav.roles")}</Link>
           <Link href="/audit" className="nav-link">{t("nav.audit")}</Link>
@@ -55,6 +74,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <a href={grafanaUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.875rem' }}>
                 {t("btn.grafana")}
               </a>)}
+            {user ? (
+              <span className="account-chip">
+                <span className="account-icon" aria-hidden="true"><LandingIcon name="user" size={18} /></span>
+                <span className="account-name">{user}</span>
+                <button type="button" className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => signOut()}>
+                  {L("Sign out", "تسجيل الخروج")}</button>
+              </span>
+            ) : user === null && (
+              <Link href={`/signin?next=${encodeURIComponent(pathname)}`} className="account-chip account-signin" title={L("Sign in", "تسجيل الدخول")}>
+                <span className="account-icon" aria-hidden="true"><LandingIcon name="signin" size={18} /></span>
+                <span>{L("Sign in", "تسجيل الدخول")}</span>
+              </Link>)}
           </div>
         </header>
         

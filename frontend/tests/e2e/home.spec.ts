@@ -1,29 +1,31 @@
 import { test, expect } from '@playwright/test';
 
-test('homepage loads and shows layout', async ({ page }) => {
+test('public home page shows the product and a sign-in entry', async ({ page }) => {
   await page.goto('/');
+  await expect(page.locator('.sidebar')).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Governance, quality and daily work');
+  await expect(page.locator('.pub-header').getByRole('link', { name: 'Sign in' })).toBeVisible();
+  await expect(page.locator('#features .pub-feature')).toHaveCount(12);
+});
 
-  // Verify the layout shell is present
+test('sign-in icon opens the sign-in page with role choices', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.pub-header').getByRole('link', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL('/signin');
+  await expect(page.getByRole('heading', { name: 'Sign in to EduNexus' })).toBeVisible();
+  await expect(page.getByRole('radio')).toHaveCount(4);
+});
+
+test('dashboard keeps the workspace layout', async ({ page }) => {
+  await page.goto('/dashboard');
   await expect(page.locator('.sidebar')).toBeVisible();
-  await expect(page.getByText('EduNexus OS', { exact: true })).toBeVisible();
-
-  // Verify the dashboard renders cards
   await expect(page.locator('.glass-card')).toHaveCount(6);
-  
-  // Verify specific modules
   await expect(page.getByRole('heading', { name: 'Directory', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Roles & Assignments', exact: true })).toBeVisible();
 });
 
 test('navigation to roles page works', async ({ page }) => {
-  await page.goto('/');
-  
-  // Click on the Roles navigation link in the sidebar
+  await page.goto('/dashboard');
   await page.getByRole('link', { name: '🛡️ Roles & RBAC' }).click();
-
-  // Ensure we navigate correctly
   await expect(page).toHaveURL('/roles');
-  
-  // Ensure the Connection dev token input exists
   await expect(page.getByText('Connection (dev)')).toBeVisible();
 });
