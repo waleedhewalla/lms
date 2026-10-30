@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using static EduNexus.Api.Endpoints.EndpointHelpers;
 
 namespace EduNexus.Api.Endpoints;
@@ -132,25 +133,33 @@ public static class DocumentEndpoints
             await scope.CommitAsync(ct);
             return Results.Created($"/api/documents/{d.Id}", d);
         });
-        docs.MapPost("/{id:guid}/upload-url", async (AppDbContext db, HttpContext ctx, ObjectStorage storage, Guid id, UploadUrlReq req, CancellationToken ct) =>
+        docs.MapPost("/{id:guid}/upload-url", async (AppDbContext db, HttpContext ctx, IObjectStorage storage, ILoggerFactory logs, Guid id, UploadUrlReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("document:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+            if (SafeFileName(req.FileName) is not { } fileName) return Results.BadRequest(new { error = "fileName is required." });
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             if (!await db.Documents.AnyAsync(d => d.TenantId == req.TenantId && d.Id == id, ct))
                 return Results.NotFound(new { error = "Document not found." });
-            await storage.EnsureBucketAsync(ct);
-            var key = $"{req.TenantId}/{id}/{Guid.NewGuid():N}-{req.FileName}";
+            try { await storage.EnsureBucketAsync(ct); }
+            catch (StorageUnavailableException ex)
+            {
+                logs.CreateLogger("Storage").LogError(ex, "Object storage is not usable for tenant {TenantId}", req.TenantId);
+                return StorageUnavailable();
+            }
+            var key = $"{req.TenantId}/{id}/{Guid.NewGuid():N}-{fileName}";
             return Results.Ok(new { objectKey = key, putUrl = await storage.PresignedPutAsync(key, ct: ct) });
         });
-        docs.MapPost("/{id:guid}/versions", async (AppDbContext db, HttpContext ctx, Guid id, AddVersionReq req, CancellationToken ct) =>
+        docs.MapPost("/{id:guid}/versions", async (AppDbContext db, HttpContext ctx, IObjectStorage storage, ILoggerFactory logs, Guid id, AddVersionReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("document:create")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+            if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey) is { } badKey) return badKey;
+            // The file must really be there, with the declared size, before a version points at it.
+            if (await RequireStoredObjectAsync(storage, logs, req.ObjectKey, req.SizeBytes, ct) is { } notStored) return notStored;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var d = await db.Documents.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
             if (d is null) return Results.NotFound(new { error = "Document not found." });
-            if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey) is { } badKey) return badKey;
             var version = d.CurrentVersion + 1;
             db.DocumentVersions.Add(new DocumentVersion(Guid.NewGuid(), req.TenantId, id, version, req.ObjectKey, req.SizeBytes, req.Sha256 ?? "", DateTimeOffset.UtcNow));
             db.Entry(d).CurrentValues.SetValues(d with { CurrentVersion = version, Status = req.Publish ? DocumentStatus.Published : d.Status });

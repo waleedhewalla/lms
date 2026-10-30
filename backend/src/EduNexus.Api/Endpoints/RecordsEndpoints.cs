@@ -185,7 +185,7 @@ public static class RecordsEndpoints
         records.MapPost("/disposals/{id:guid}/reject", (AppDbContext db, HttpContext ctx, Guid id, DecideDisposalReq req, CancellationToken ct) =>
             DecideAsync(db, ctx, id, req, approve: false, ct));
 
-        records.MapPost("/disposals/{id:guid}/execute", async (AppDbContext db, HttpContext ctx, ObjectStorage storage, ILoggerFactory logs,
+        records.MapPost("/disposals/{id:guid}/execute", async (AppDbContext db, HttpContext ctx, IObjectStorage storage, ILoggerFactory logs,
             Guid id, DecideDisposalReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("records:manage")) return Results.Forbid();
@@ -344,7 +344,7 @@ public static class RecordsEndpoints
     /// fails or cannot be confirmed the item is StoragePending (never reported as destroyed while a copy may
     /// remain) and the batch can be executed again to retry.
     /// </summary>
-    private static async Task<DisposalItem> DestroyAsync(AppDbContext db, ObjectStorage storage, ILogger log, Guid tenantId,
+    private static async Task<DisposalItem> DestroyAsync(AppDbContext db, IObjectStorage storage, ILogger log, Guid tenantId,
         RetentionSchedule schedule, DisposalBatch b, DisposalItem item, DateTimeOffset now, CancellationToken ct)
     {
         var stamp = $"[Destroyed {now:yyyy-MM-dd} under retention schedule {schedule.Code}, disposal batch {b.Id}]";
@@ -366,9 +366,10 @@ public static class RecordsEndpoints
                 await storage.RemoveAsync(key, timeout.Token);
                 if (!await storage.ConfirmDeletedAsync(key, timeout.Token)) failures.Add(key);
             }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
+            // Storage trouble (including our own 15 s limit firing) leaves the item pending; anything else is a bug and must surface.
+            catch (Exception ex) when ((ex is StorageUnavailableException or OperationCanceledException) && !ct.IsCancellationRequested)
             {
-                log.LogWarning(ex, "Disposal batch {Batch}: could not delete object {Key}", b.Id, key);
+                log.LogError(ex, "Disposal batch {Batch}: could not delete or confirm deletion of object {Key}; item stays pending", b.Id, key);
                 failures.Add(key);
             }
         }

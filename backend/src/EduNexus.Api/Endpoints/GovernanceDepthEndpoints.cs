@@ -6,12 +6,14 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using EduNexus.Api.Auth;
+using EduNexus.Api.Storage;
 using EduNexus.Foundation;
 using EduNexus.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using static EduNexus.Api.Endpoints.EndpointHelpers;
 
 namespace EduNexus.Api.Endpoints;
@@ -461,17 +463,25 @@ public static class GovernanceDepthEndpoints
             return Results.Ok(updated);
         }).RequireAuthorization().WithTags("Decisions");
 
-        app.MapPost("/api/decision-actions/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, Guid id, ActionEvidenceReq req, CancellationToken ct) =>
+        app.MapPost("/api/decision-actions/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, IObjectStorage storage, ILoggerFactory logs, Guid id, ActionEvidenceReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("action:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (string.IsNullOrWhiteSpace(req.ObjectKey) || string.IsNullOrWhiteSpace(req.FileName))
                 return Results.BadRequest(new { error = "objectKey and fileName required." });
-            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
-            var a = await db.DecisionActions.FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == id, ct);
-            if (a is null) return Results.NotFound(new { error = "Action not found." });
-            if (await ActingPersonAsync(db, ctx, req.TenantId, ct) is not { } me || me != a.AssigneeId) return Results.Forbid();
+            // Who may attach evidence is decided first, in a short transaction of its own: the storage check below waits on
+            // the network and must not hold a database transaction open.
+            Guid me;
+            await using (var authorise = await TenantScope.BeginAsync(db, req.TenantId, ct))
+            {
+                var assignee = await db.DecisionActions.AsNoTracking().Where(x => x.TenantId == req.TenantId && x.Id == id).Select(x => (Guid?)x.AssigneeId).FirstOrDefaultAsync(ct);
+                if (assignee is null) return Results.NotFound(new { error = "Action not found." });
+                if (await ActingPersonAsync(db, ctx, req.TenantId, ct) is not { } who || who != assignee) return Results.Forbid();
+                me = who;
+            }
             if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey.Trim()) is { } badKey) return badKey;
+            if (await RequireStoredObjectAsync(storage, logs, req.ObjectKey.Trim(), null, ct) is { } notStored) return notStored;
+            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var ev = new DecisionActionEvidence(Guid.NewGuid(), req.TenantId, id, req.ObjectKey.Trim(), req.FileName.Trim(), req.Note?.Trim(), me, DateTimeOffset.UtcNow);
             db.DecisionActionEvidences.Add(ev);
             DomainEvents.Record(db, req.TenantId, "ActionEvidenceAdded", "ActionEvidenceAdded", nameof(DecisionAction), id.ToString(), actorId: me, details: ev.FileName);

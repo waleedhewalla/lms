@@ -95,6 +95,16 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **My attestations** on the Policies page lists what each person still has to do and why (never, new version, cycle due). Owners see **attestation compliance** per policy and can send in-app reminders to everyone outstanding.
 - The governance dashboard and policy report count only current attestations.
 
+## Storage safety (G6)
+- **File storage can no longer fail silently.** The MinIO SDK was seen to report success against an unreachable server, so the API now proves each claim itself with a signed request:
+  - the bucket is checked before an upload URL is issued (otherwise 503);
+  - an uploaded file must exist, with the declared size, before a document version, task evidence or decision-action evidence refers to it (otherwise 422, or 503 if storage cannot answer);
+  - a deletion is confirmed only when storage says the object does not exist: a missing bucket no longer counts as "deleted".
+- Uploaded file names are reduced to a safe leaf (no paths, `..` or control characters).
+- Records disposal logs storage failures as errors and leaves the item pending, as before.
+- Tests no longer depend on a MinIO server (an in-memory fake with scripted failures), and a test fails the build if an empty `catch { }` is added to the backend.
+- Known limits: the SHA-256 a client declares is recorded, not recomputed; files attached as evidence are not removed by records disposal.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

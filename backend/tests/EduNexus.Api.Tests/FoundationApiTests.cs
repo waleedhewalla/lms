@@ -362,6 +362,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/decisions/{decision}/transition", new { tenantId = tenant, status = "Implemented" })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await chairC.PostAsJsonAsync($"/api/decision-actions/{action}/evidence",
             new { tenantId = tenant, objectKey = "x", fileName = "x.pdf", note = (string?)null })).StatusCode);
+        factory.Storage.Put($"{tenant}/evidence/policy.pdf", 100);
         Assert.Equal(HttpStatusCode.Created, (await secC.PostAsJsonAsync($"/api/decision-actions/{action}/evidence",
             new { tenantId = tenant, objectKey = $"{tenant}/evidence/policy.pdf", fileName = "policy.pdf", note = "v1" })).StatusCode);
         await client.PostAsJsonAsync($"/api/decision-actions/{action}/advance", new { tenantId = tenant, status = "Done" });
@@ -1070,6 +1071,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, urlRes.StatusCode);
         var upload = await urlRes.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Contains("edunexus-docs", upload.GetProperty("putUrl").GetString());
+        factory.Storage.Put(upload.GetProperty("objectKey").GetString()!, 1234);   // the client uploads with the URL
         var ver = await client.PostAsJsonAsync($"/api/documents/{doc}/versions",
             new { tenantId = tenant, objectKey = upload.GetProperty("objectKey").GetString(), sizeBytes = 1234, sha256 = "abc", publish = true });
         Assert.Equal(HttpStatusCode.Created, ver.StatusCode);
@@ -1311,6 +1313,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         var comment = await client.PostAsJsonAsync($"/api/tasks/{taskId}/comments",
             new { tenantId = tenant, authorId = deputy, text = "Started installation" });
         Assert.Equal(HttpStatusCode.Created, comment.StatusCode);
+        factory.Storage.Put($"{tenant}/tasks/key.pdf", 100);
         var ev = await client.PostAsJsonAsync($"/api/tasks/{taskId}/evidence",
             new { tenantId = tenant, uploadedBy = deputy, objectKey = $"{tenant}/tasks/key.pdf", fileName = "key.pdf" });
         Assert.Equal(HttpStatusCode.Created, ev.StatusCode);
@@ -2215,17 +2218,36 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.Contains("recordDate_hijri", manifest);
         Assert.Contains("records-approver", manifest);
 
-        // Documents: stored files must actually be deleted. Object storage is unreachable here, so the item is
-        // StoragePending (never reported destroyed while a copy remains) and the batch can be re-run.
+        // Documents: stored files must actually be deleted and the deletion confirmed. Storage unreachable, the file still
+        // there after the delete, or no answer at all each leave the item StoragePending (never reported destroyed while a
+        // copy may remain), and the batch can be re-run; only a positive "gone" completes it.
+        factory.Storage.Put($"{tenant}/{doc.Id}/v1.pdf", 10);
         var docSched = IdOf(await (await officer.PostAsJsonAsync("/api/records/schedules", new { tenantId = tenant, code = "DOC-5", name = "Procurement files",
             entityType = "Document", recordClass = "Financial", retentionYears = 5, disposition = "Destroy" })).Content.ReadFromJsonAsync<JsonElement>());
         var docBatch = (await (await officer.PostAsJsonAsync("/api/records/disposals", new { tenantId = tenant, scheduleId = docSched })).Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("batch").GetProperty("id").GetGuid();
         await approver.PostAsJsonAsync($"/api/records/disposals/{docBatch}/approve", new { tenantId = tenant });
-        var docExec = await (await officer.PostAsJsonAsync($"/api/records/disposals/{docBatch}/execute", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("ExecutedWithErrors", docExec.GetProperty("batch").GetProperty("status").GetString());
-        Assert.Equal(1, docExec.GetProperty("outcomes").GetProperty("StoragePending").GetInt32());
-        Assert.Equal(HttpStatusCode.OK, (await officer.PostAsJsonAsync($"/api/records/disposals/{docBatch}/execute", new { tenantId = tenant })).StatusCode);
+        try
+        {
+            async Task<JsonElement> ExecuteDocBatch() =>
+                await (await officer.PostAsJsonAsync($"/api/records/disposals/{docBatch}/execute", new { tenantId = tenant })).Content.ReadFromJsonAsync<JsonElement>();
+            factory.Storage.Unavailable = true;
+            var docExec = await ExecuteDocBatch();
+            Assert.Equal("ExecutedWithErrors", docExec.GetProperty("batch").GetProperty("status").GetString());
+            Assert.Equal(1, docExec.GetProperty("outcomes").GetProperty("StoragePending").GetInt32());
+            factory.Storage.Unavailable = false;
+            factory.Storage.KeepAfterRemove = true;     // the delete is accepted, but the file is still there
+            var stillThere = await ExecuteDocBatch();
+            Assert.Equal("ExecutedWithErrors", stillThere.GetProperty("batch").GetProperty("status").GetString());
+            Assert.Equal(1, stillThere.GetProperty("outcomes").GetProperty("StoragePending").GetInt32());
+            Assert.True(factory.Storage.Has($"{tenant}/{doc.Id}/v1.pdf"));
+            factory.Storage.KeepAfterRemove = false;
+            var done = await ExecuteDocBatch();
+            Assert.Equal("Executed", done.GetProperty("batch").GetProperty("status").GetString());
+            Assert.Equal(1, done.GetProperty("outcomes").GetProperty("Destroyed").GetInt32());
+            Assert.False(factory.Storage.Has($"{tenant}/{doc.Id}/v1.pdf"));
+        }
+        finally { factory.Storage.Reset(); }
 
         // Transfer to the national archive; a hold placed after proposal blocks that record at execution.
         var t1 = Letter("OUT-5", CorrespondenceStatus.Approved, old);
@@ -2690,6 +2712,57 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         Assert.True(mine.GetProperty("current").GetBoolean());
         Assert.True(mine.GetProperty("dueAgain").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddMonths(11));
         Assert.Equal(HttpStatusCode.Forbidden, (await hudaC.PutAsJsonAsync($"/api/policies/{policy}/attestation", new { tenantId = tenant, attestEveryMonths = 1 })).StatusCode);
+    }
+    [Fact]
+    public async Task Storage_Failures_Surface_Instead_Of_Looking_Like_Success()
+    {
+        var boot = factory.CreateClient();
+        Auth(boot, Mint(Guid.NewGuid(), ["tenant:create"]));
+        var tenant = IdOf(await (await boot.PostAsJsonAsync("/api/tenants", new { slug = $"stor-{Guid.NewGuid():N}"[..20], name = "Storage University" })).Content.ReadFromJsonAsync<JsonElement>());
+        var client = factory.CreateClient();
+        Auth(client, Mint(tenant, ["document:create", "task:update"]));
+        var doc = IdOf(await (await client.PostAsJsonAsync("/api/documents", new { tenantId = tenant, title = "Contract" })).Content.ReadFromJsonAsync<JsonElement>());
+        var uploadUrl = $"/api/documents/{doc}/upload-url";
+        try
+        {
+            // File names are reduced to a safe leaf: no path, no traversal, no control characters.
+            var hostile = await (await client.PostAsJsonAsync(uploadUrl, new { tenantId = tenant, fileName = "..\\..//etc/pass\u0001wd.pdf" })).Content.ReadFromJsonAsync<JsonElement>();
+            var key = hostile.GetProperty("objectKey").GetString()!;
+            Assert.StartsWith($"{tenant}/{doc}/", key);
+            Assert.DoesNotContain("..", key);
+            Assert.EndsWith("-passwd.pdf", key);
+            var dots = await (await client.PostAsJsonAsync(uploadUrl, new { tenantId = tenant, fileName = ".." })).Content.ReadFromJsonAsync<JsonElement>();
+            Assert.EndsWith("-_", dots.GetProperty("objectKey").GetString());   // sanitised, not rejected
+            foreach (var bad in new[] { "", "   ", "/", "\\" })
+                Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync(uploadUrl, new { tenantId = tenant, fileName = bad })).StatusCode);
+
+            // Storage down or its bucket unusable: 503, never a URL that cannot work.
+            factory.Storage.Unavailable = true;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync(uploadUrl, new { tenantId = tenant, fileName = "a.pdf" })).StatusCode);
+            factory.Storage.Reset();
+            factory.Storage.BucketMissing = true;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync(uploadUrl, new { tenantId = tenant, fileName = "a.pdf" })).StatusCode);
+            factory.Storage.Reset();
+
+            // A version only points at a file that is really stored, with the declared size.
+            var versions = $"/api/documents/{doc}/versions";
+            var objectKey = $"{tenant}/{doc}/never-uploaded.pdf";
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await client.PostAsJsonAsync(versions, new { tenantId = tenant, objectKey, sizeBytes = 100, sha256 = "x", publish = false })).StatusCode);
+            factory.Storage.Put(objectKey, 100);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await client.PostAsJsonAsync(versions, new { tenantId = tenant, objectKey, sizeBytes = 999, sha256 = "x", publish = false })).StatusCode);
+            factory.Storage.Unavailable = true;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync(versions, new { tenantId = tenant, objectKey, sizeBytes = 100, sha256 = "x", publish = false })).StatusCode);
+            factory.Storage.Reset();
+            Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync(versions, new { tenantId = tenant, objectKey, sizeBytes = 100, sha256 = "x", publish = false })).StatusCode);
+
+            // Evidence files too.
+            var task = Guid.NewGuid();
+            var evidence = $"/api/tasks/{task}/evidence";
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await client.PostAsJsonAsync(evidence, new { tenantId = tenant, uploadedBy = Guid.NewGuid(), objectKey = $"{tenant}/tasks/missing.pdf", fileName = "missing.pdf" })).StatusCode);
+            factory.Storage.Unavailable = true;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync(evidence, new { tenantId = tenant, uploadedBy = Guid.NewGuid(), objectKey = $"{tenant}/tasks/missing.pdf", fileName = "missing.pdf" })).StatusCode);
+        }
+        finally { factory.Storage.Reset(); }
     }
 }
 

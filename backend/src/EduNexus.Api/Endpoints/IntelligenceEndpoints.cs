@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using EduNexus.Api.AI;
 using EduNexus.Api.Auth;
+using EduNexus.Api.Storage;
 using EduNexus.Api.Events;
 using EduNexus.Foundation;
 using EduNexus.Infrastructure;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using static EduNexus.Api.Endpoints.EndpointHelpers;
 
 namespace EduNexus.Api.Endpoints;
@@ -755,11 +757,12 @@ public static class IntelligenceEndpoints
             await scope.CommitAsync(ct);
             return Results.Created($"/api/tasks/{id}/comments/{comment.Id}", comment);
         });
-        tasks.MapPost("/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, Guid id, AddTaskEvidenceReq req, CancellationToken ct) =>
+        tasks.MapPost("/{id:guid}/evidence", async (AppDbContext db, HttpContext ctx, IObjectStorage storage, ILoggerFactory logs, Guid id, AddTaskEvidenceReq req, CancellationToken ct) =>
         {
             if (!ctx.User.HasPermission("task:update")) return Results.Forbid();
             if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
             if (BadRequestIfForeignObjectKey(req.TenantId, req.ObjectKey) is { } badKey) return badKey;
+            if (await RequireStoredObjectAsync(storage, logs, req.ObjectKey, null, ct) is { } notStored) return notStored;
             await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
             var ev = new TaskEvidence(Guid.NewGuid(), req.TenantId, id, req.UploadedBy, req.ObjectKey, req.FileName, DateTimeOffset.UtcNow);
             db.TaskEvidences.Add(ev);
