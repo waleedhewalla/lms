@@ -64,10 +64,10 @@ public sealed class CorrespondenceTypeTests(EduNexusFactory factory) : IClassFix
         var admin = As(tenant, Manager);
 
         var first = await Json(await admin.PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = tenant }));
-        Assert.Equal(9, first.GetProperty("created").GetArrayLength());
+        Assert.Equal(12, first.GetProperty("created").GetArrayLength());
         var types = await admin.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}&includeInactive=true");
-        Assert.Equal(9, types!.Length);
-        Assert.Equal(["ADMIN_MEMO", "ACADEMIC", "FINANCIAL", "INTER_UNIT", "EMPLOYEE_REQUEST", "STUDENT_REQUEST", "DECISION", "CIRCULAR", "INFO_REQUEST"],
+        Assert.Equal(12, types!.Length);
+        Assert.Equal(["ADMIN_MEMO", "ACADEMIC", "FINANCIAL", "INTER_UNIT", "EMPLOYEE_REQUEST", "STUDENT_REQUEST", "DECISION", "CIRCULAR", "INFO_REQUEST", "COLLEGE_ADMIN", "COLLEGE_DEPT", "TO_DEAN"],
             types.Select(t => t.GetProperty("code").GetString()));
         Assert.All(types, t => { Assert.False(string.IsNullOrWhiteSpace(t.GetProperty("nameAr").GetString())); Assert.False(string.IsNullOrWhiteSpace(t.GetProperty("purpose").GetString())); });
 
@@ -101,9 +101,9 @@ public sealed class CorrespondenceTypeTests(EduNexusFactory factory) : IClassFix
         await admin.PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = tenant });
 
         var readerView = await As(tenant, Staff).GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}");
-        Assert.Equal(8, readerView!.Length);                                                // the inactive student type is hidden
+        Assert.Equal(11, readerView!.Length);                                                // the inactive student type is hidden
         var asked = await As(tenant, Staff).GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}&includeInactive=true");
-        Assert.Equal(8, asked!.Length);                                                     // only a manager may ask for the inactive ones
+        Assert.Equal(11, asked!.Length);                                                     // only a manager may ask for the inactive ones
 
         var studentClient = As(tenant, StudentOnly);
         Assert.Empty((await studentClient.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}"))!);   // allowed to ask, but nothing is switched on for a student yet

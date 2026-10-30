@@ -84,11 +84,11 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
     private Task<CorrespondenceStatus> StatusAsync(Guid letter) => Db(async db => (await db.Correspondences.AsNoTracking().SingleAsync(c => c.Id == letter)).Status);
 
     [Fact]
-    public async Task Seeding_Also_Creates_The_Nine_Workflows_And_Keeps_Edited_Ones()
+    public async Task Seeding_Also_Creates_The_Standard_Workflows_And_Keeps_Edited_Ones()
     {
         var w = await BuildAsync();
         var codes = await Db(db => db.WorkflowDefinitions.Where(d => d.TenantId == w.Tenant).Select(d => d.Code).ToListAsync());
-        Assert.Equal(9, codes.Count(c => c.StartsWith("CORR_")));
+        Assert.Equal(12, codes.Count(c => c.StartsWith("CORR_")));
         var again = await Json(await As(w.Tenant, Manager).PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = w.Tenant }));
         Assert.Empty(again.GetProperty("workflowsCreated").EnumerateArray());
     }
@@ -117,6 +117,41 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
         Assert.Equal(2, history.GetProperty("steps").GetArrayLength());
         Assert.Contains(history.GetProperty("events").EnumerateArray(), e => e.GetProperty("action").GetString() == "WorkflowCompleted");
         Assert.Contains(history.GetProperty("steps").EnumerateArray(), s => s.GetProperty("decidedByName").GetString() == "Head");
+    }
+
+    [Fact]
+    public async Task A_Letter_To_The_Dean_Goes_Through_The_Vice_Dean_And_Needs_One()
+    {
+        var w = await BuildAsync();
+        var id = await CreateAsync(w, "TO_DEAN", unit: w.TargetUnit);
+        var noDeputy = await SubmitAsync(w, id);                                  // the college has no vice dean yet
+        Assert.Equal(HttpStatusCode.OK, noDeputy.StatusCode);                      // the first step (line manager) exists
+        var first = await PendingAsync(w.Tenant, id);
+        var stuck = await DecideAsync(w, first, true);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, stuck.StatusCode);
+        Assert.Contains("deputy", (await Json(stuck)).GetProperty("error").GetString());
+        var viceDean = w.Finance;                                                  // any person will do for the test
+        await Db(async db => { var u = await db.OrganizationalUnits.SingleAsync(x => x.Id == w.TargetUnit); db.Entry(u).CurrentValues.SetValues(u with { DeputyPersonId = viceDean }); await db.SaveChangesAsync(); return 0; });
+        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, first, true)).StatusCode);
+        var second = await PendingAsync(w.Tenant, id);
+        Assert.Equal(viceDean, second.AssigneeId);                                 // vice dean first
+        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, second, true)).StatusCode);
+        Assert.Equal(w.TargetHead, (await PendingAsync(w.Tenant, id)).AssigneeId); // then the dean
+    }
+
+    [Fact]
+    public async Task College_Administrations_And_Departments_Write_Head_To_Head()
+    {
+        var w = await BuildAsync();
+        foreach (var code in new[] { "COLLEGE_ADMIN", "COLLEGE_DEPT" })
+        {
+            var id = await CreateAsync(w, code, unit: w.TargetUnit);
+            Assert.Equal(HttpStatusCode.OK, (await SubmitAsync(w, id)).StatusCode);
+            Assert.Equal(w.Head, (await PendingAsync(w.Tenant, id)).AssigneeId);
+            Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, await PendingAsync(w.Tenant, id), true)).StatusCode);
+            Assert.Equal(w.TargetHead, (await PendingAsync(w.Tenant, id)).AssigneeId);
+        }
+        Assert.Equal(HttpStatusCode.BadRequest, (await As(w.Tenant, Writer, w.Author).PostAsJsonAsync("/api/correspondence", new { tenantId = w.Tenant, type = "Internal", subject = "s", content = "c", authorId = w.Author, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(), typeCode = "TO_DEAN" })).StatusCode);   // needs the college
     }
 
     [Fact]
@@ -276,6 +311,10 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
         Assert.Equal(HttpStatusCode.Forbidden, (await student.GetAsync($"/api/correspondence?tenantId={w.Tenant}")).StatusCode);                    // no general read
         Assert.Equal(HttpStatusCode.NotFound, (await student.GetAsync($"/api/correspondence/{staffLetter}/history?tenantId={w.Tenant}")).StatusCode);   // not their letter
         Assert.Equal(HttpStatusCode.OK, (await student.GetAsync($"/api/correspondence/{mine}/history?tenantId={w.Tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await student.GetAsync($"/api/correspondence/{mine}?tenantId={w.Tenant}")).StatusCode);                         // their own letter, in full
+        Assert.Equal(HttpStatusCode.Forbidden, (await student.GetAsync($"/api/correspondence/{staffLetter}?tenantId={w.Tenant}")).StatusCode);          // someone else's
+        Assert.Equal(HttpStatusCode.OK, (await student.GetAsync($"/api/correspondence/units?tenantId={w.Tenant}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await As(w.Tenant, ["person:read"]).GetAsync($"/api/correspondence/units?tenantId={w.Tenant}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await student.PostAsJsonAsync($"/api/correspondence/{staffLetter}/submit", new { tenantId = w.Tenant })).StatusCode);   // not theirs to send
     }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pageWindow, recipientsOf, registerQuery, replyDirection, replySubject } from "../../lib/correspondence";
+import { eventLabel, letterActions, pageWindow, recipientsOf, registerQuery, replyDirection, replySubject, stepState } from "../../lib/correspondence";
 import { personIdOf } from "../../lib/modules";
 
 test("registerQuery keeps only the filters that are set", () => {
@@ -46,4 +46,33 @@ test("the acting person is the person_id claim, only when it is a GUID", () => {
   assert.equal(personIdOf({ person_id: "not-a-guid" }), null);
   assert.equal(personIdOf({}), null);
   assert.equal(personIdOf(null), null);
+});
+
+test("letter actions follow status and who is asking", () => {
+  const typed = (status: string) => ({ status, typeCode: "ADMIN_MEMO" });
+  assert.deepEqual(letterActions(typed("Draft"), true, false), { edit: true, submit: true, resubmit: false, close: true });
+  assert.deepEqual(letterActions(typed("Returned"), true, false), { edit: true, submit: false, resubmit: true, close: true });
+  assert.deepEqual(letterActions(typed("Submitted"), true, false), { edit: false, submit: false, resubmit: false, close: true });
+  assert.deepEqual(letterActions(typed("Submitted"), false, false), { edit: false, submit: false, resubmit: false, close: false });   // not the author
+  assert.equal(letterActions(typed("Submitted"), false, true).close, true);                                                          // records may close
+  assert.equal(letterActions(typed("Approved"), true, false).close, false);                                                          // an approved letter is closed by records
+  assert.equal(letterActions(typed("Approved"), true, true).close, true);
+  for (const done of ["Closed", "Rejected", "Archived"]) assert.equal(letterActions(typed(done), true, true).close, false);
+  assert.deepEqual(letterActions({ status: "Draft", typeCode: null }, true, false), { edit: false, submit: false, resubmit: false, close: true });   // untyped letters keep their old path
+});
+
+test("a step is overdue only while it is still pending", () => {
+  const now = new Date("2026-11-01T12:00:00Z");
+  const past = "2026-10-30T00:00:00Z", future = "2026-11-05T00:00:00Z";
+  assert.equal(stepState({ status: "Pending", dueAt: past }, now), "Overdue");
+  assert.equal(stepState({ status: "Pending", dueAt: future }, now), "Waiting");
+  assert.equal(stepState({ status: "Approved", dueAt: past }, now), "Done");
+  assert.equal(stepState({ status: "Rejected", dueAt: past }, now), "Rejected");
+  assert.equal(stepState({ status: "Cancelled", dueAt: past }, now), "Cancelled");
+});
+
+test("history events have readable names in both languages and fall back to the raw action", () => {
+  assert.equal(eventLabel("WorkflowReturned", false), "Returned for changes");
+  assert.equal(eventLabel("WorkflowReturned", true), "أُعيدت للتعديل");
+  assert.equal(eventLabel("SomethingNew", true), "SomethingNew");
 });

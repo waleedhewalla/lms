@@ -15,7 +15,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (res.status === 401) throw new Error(`${init?.method ?? "GET"} ${path} → 401 (not signed in or session expired — sign in again)`);
   if (res.status === 403) throw new Error(`${init?.method ?? "GET"} ${path} → 403 (no permission for this, or your account is not linked to a person in the directory)`);
-  if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}`);
+  if (!res.ok) {
+    // The server explains refusals it chose (a missing approver, a missing reason): show that, not only the number.
+    const detail = await res.json().then((b: { error?: unknown }) => (typeof b?.error === "string" ? b.error : ""), () => "");
+    throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}${detail ? ` (${detail})` : ""}`);
+  }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }

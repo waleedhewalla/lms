@@ -29,6 +29,15 @@ public static class CorrespondenceFlowEndpoints
             return Results.Ok(await db.Correspondences.Where(c => c.TenantId == tenantId && c.AuthorId == me).OrderByDescending(c => c.CreatedAt).ToListAsync(ct));
         });
 
+        // The units a letter can be addressed to, for the screen's picker. Open to anyone who may start a letter, so it needs no directory permission.
+        corr.MapGet("/units", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+        {
+            if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+            if (!ctx.User.HasPermission("correspondence:create") && !ctx.User.HasPermission("correspondence:student-request") && !ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
+            await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            return Results.Ok(await db.OrganizationalUnits.Where(u => u.TenantId == tenantId && u.IsActive).OrderBy(u => u.Code).Select(u => new { u.Id, u.Code, u.Name, u.ParentId }).ToListAsync(ct));
+        });
+
         // Only the author changes a letter, and only while it is a draft or has been sent back.
         corr.MapPatch("/{id:guid}", async (AppDbContext db, HttpContext ctx, Guid id, EditCorrespondenceReq req, CancellationToken ct) =>
         {

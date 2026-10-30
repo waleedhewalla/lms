@@ -185,6 +185,18 @@ Feature-complete release of the delivery plan (Waves A–G).
 - **For the university to confirm:** the financial limits (50,000 and 250,000 are placeholders), who closes each type, whether a returned letter restarts from the first step, and whether the student request type is switched on. The screens follow in step 3.
 - Not yet: the screens for all of this (step 3).
 
+## Correspondence inside a college
+- Three more standard types: between college administrations, between departments of a college, and to the dean or vice dean (line manager, then vice dean, then dean). `seed-defaults` now creates twelve types; tenants already seeded get the new ones by running it again. Workflow steps can now be addressed to the receiving unit's deputy (`target_deputy`).
+- To confirm: whether the sender and receiver must be in the same college (not enforced yet), and whether the vice dean step is always required.
+
+## Correspondence screens for types and workflows (step 3 of 3)
+- The Correspondence page now offers a **letter type** when writing (it shows the type's purpose, sender and receiver, asks for the receiving unit or amount where the type needs them). Sending a typed letter starts its workflow; a letter with no type keeps the old reviewer picker.
+- A letter shows its **path**: each step, who it is with, whether it is waiting, overdue, approved, returned or rejected, the deadline, who decided and their note, plus the full history. The author gets **Edit**, **Send**, **Send again** (after a return) and **Withdraw**; records staff get **Close**. A reason is required to withdraw or close.
+- Students (who hold only `correspondence:student-request`) now see the Correspondence module and only **My letters**; they can write and send their own request and follow its path, but never see the register.
+- When the server refuses something it chose to refuse (for example "no assignee found for role STUDENT_AFFAIRS"), the message is now shown instead of just the status number.
+- API: an author may now open their own letter without the general read permission (`GET /api/correspondence/{id}`); new `GET /api/correspondence/units` lists the units a letter can be addressed to, for anyone who may write a letter (no directory permission needed).
+- Tests: unit tests for the action rules, step states and history labels; three end-to-end specs on the real API (typed letter returned, edited, resent and withdrawn; student view; the earlier register flow). The end-to-end specs run locally and are not part of CI.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
