@@ -39,7 +39,7 @@ AC: Given duplicate code in tenant When POST /api/roles Then 409.
 Actor: authorized employee with `correspondence:create`. Preconditions: authenticated,
 tenant active, author exists. Behavior: 1) select type 2) form generated 3–8) recipient/
 subject/content/attachments-meta/priority/confidentiality 9) submit draft 10) validate
-11) number reserved at creation `CORR-yyyy-nnnnnn` (unique per tenant, atomic sequence)
+11) number reserved at creation, one register per direction and year: `IN-yyyy-nnnnnn`, `OUT-yyyy-nnnnnn`, `INT-yyyy-nnnnnn` (unique per tenant, atomic sequence; the year is the institution's local year; letters created before this change keep their `CORR-` numbers)
 12) submit starts approval workflow 13) audit + outbox 14) reviewer notified (broker→consumer→in-app).
 Rules: confidential needs `correspondence:confidential` (create + list filtering);
 High/Urgent → Accelerated SLA (due +2d, else +5d); submit only from Draft (409 otherwise).

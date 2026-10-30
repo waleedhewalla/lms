@@ -612,7 +612,7 @@ public sealed class FoundationApiTests(EduNexusFactory factory) : IClassFixture<
         });
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var corr = await create.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.StartsWith("CORR-", corr.GetProperty("number").GetString());
+        Assert.StartsWith("INT-", corr.GetProperty("number").GetString());
         Assert.Equal("Draft", corr.GetProperty("status").GetString());
         var corrId = corr.GetProperty("id").GetGuid();
 

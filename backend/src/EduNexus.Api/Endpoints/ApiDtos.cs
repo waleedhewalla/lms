@@ -14,7 +14,7 @@ public sealed record DevTokenReq(string Subject, Guid TenantId, string[]? Permis
 public sealed record CreateRoleReq(Guid TenantId, string Code, string Name, string[]? Permissions);
 public sealed record AssignRoleReq(Guid TenantId, Guid PersonId, string RoleCode, string? Scope, DateTimeOffset? ExpiresAt);
 public sealed record RevokeRoleReq(Guid TenantId, Guid PersonId, string RoleCode);
-public sealed record RecipientReq(string? PersonId, string DisplayName, bool IsExternal);
+public sealed record RecipientReq(string? PersonId, string DisplayName, bool IsExternal, string? Kind = null);
 public sealed record CreateCorrespondenceReq(Guid TenantId, string Type, string Subject, string Content, Guid AuthorId, string? Priority, bool IsConfidential, RecipientReq[]? Recipients, Guid? ParentCorrespondenceId = null);
 public sealed record CreateRoutingSlipReq(Guid TenantId, Guid FromPersonId, Guid? ToUnitId, Guid? ToPersonId, string ActionRequired, string Instructions, DateTimeOffset? DueAt);
 /// <summary>PersonId omitted: the caller votes for themselves. Given and not the caller: the secretary records a vote cast in the room (meeting:create).</summary>

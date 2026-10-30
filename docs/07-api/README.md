@@ -20,7 +20,9 @@ Per endpoint: method, auth, authz, request/response, validation, errors, paging/
 
 ## R2 implemented
 - `GET /api/correspondence?tenantId=&status=` (`correspondence:read`; confidential filtered without `correspondence:confidential`)
-- `POST /api/correspondence` (`correspondence:create`; reserves `CORR-yyyy-nnnnnn`)
+- `POST /api/correspondence` (`correspondence:create`; reserves `IN|OUT|INT-yyyy-nnnnnn`; recipients have `kind` To|Cc)
+- `GET /api/correspondence/register?tenantId=&year=&type=&status=&q=&skip=&take=` (`correspondence:read`; newest first, recipients included, no letter body; confidential letters only for `correspondence:confidential`)
+- `GET /api/correspondence/register/export?...&calendar=gregorian|hijri|both` (CSV, same filters)
 - `POST /api/correspondence/{id}/submit` (Draft→Submitted + approval + task + event)
 - `GET /api/approvals?tenantId=&assigneeId=&status=` (`approval:read`)
 - `POST /api/approvals/{id}/decide` (`approval:decide`, assignee-only, 409 double-decide)
