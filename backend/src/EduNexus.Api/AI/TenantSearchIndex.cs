@@ -12,6 +12,9 @@ public sealed class AiOptions
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "";
     public string OpenSearchUrl { get; set; } = "http://127.0.0.1:9201";
+    /// <summary>Basic-auth login for OpenSearch. Required when its security plugin is on (the chart does this with in-cluster TLS).</summary>
+    public string OpenSearchUser { get; set; } = "";
+    public string OpenSearchPassword { get; set; } = "";
 }
 
 /// <summary>Tenant-scoped retrieval index on OpenSearch (AI-06). One index per tenant.</summary>

@@ -1,0 +1,124 @@
+{{- if .Values.tls.enabled }}
+{{- if not (has .Values.tls.mode (list "certManager" "existingSecret")) }}
+{{- fail "tls.mode must be certManager or existingSecret" }}
+{{- end }}
+{{- $ns := .Values.namespace }}
+{{- $v := .Values.tls }}
+{{- if eq $v.mode "certManager" }}
+{{- if not $v.issuerRef }}
+# The chart's own CA: a self-signed bootstrap issuer signs the CA certificate, and that CA signs every service.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: edunexus-selfsigned
+  namespace: {{ $ns }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: edunexus-ca
+  namespace: {{ $ns }}
+spec:
+  isCA: true
+  commonName: edunexus-ca
+  secretName: edunexus-ca
+  duration: {{ $v.caDuration }}
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: edunexus-selfsigned, kind: Issuer, group: cert-manager.io }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: edunexus-ca
+  namespace: {{ $ns }}
+spec:
+  ca:
+    secretName: edunexus-ca
+---
+{{- end }}
+{{- range $svc := list "postgres" "redis" "rabbitmq" "minio" "opensearch" "api" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: edunexus-tls-{{ $svc }}
+  namespace: {{ $ns }}
+spec:
+  secretName: edunexus-tls-{{ $svc }}
+  commonName: edunexus-{{ $svc }}
+  dnsNames:
+    - edunexus-{{ $svc }}
+    - edunexus-{{ $svc }}.{{ $ns }}
+    - edunexus-{{ $svc }}.{{ $ns }}.svc
+    - edunexus-{{ $svc }}.{{ $ns }}.svc.cluster.local
+  duration: {{ $v.duration }}
+  renewBefore: {{ $v.renewBefore }}
+  privateKey: { algorithm: ECDSA, size: 256, rotationPolicy: Always }
+  usages: [server auth, client auth, digital signature, key encipherment]
+  {{- if $v.issuerRef }}
+  issuerRef: {{ toYaml $v.issuerRef | nindent 4 }}
+  {{- else }}
+  issuerRef: { name: edunexus-ca, kind: Issuer, group: cert-manager.io }
+  {{- end }}
+---
+{{- end }}
+{{- end }}
+# Postgres only accepts TLS from the network. Local connections (the container's own backup/restore tooling) stay on the
+# socket and loopback, as in the stock image.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edunexus-postgres-hba
+  namespace: {{ $ns }}
+data:
+  pg_hba.conf: |
+    local   all         all                       trust
+    host    all         all   127.0.0.1/32        trust
+    host    all         all   ::1/128             trust
+    local   replication all                       trust
+    host    replication all   127.0.0.1/32        trust
+    host    replication all   ::1/128             trust
+    hostssl all         all   all                 scram-sha-256
+---
+# RabbitMQ: TLS listeners only (AMQP 5671, management 15671); the plain ports are switched off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edunexus-rabbitmq-tls
+  namespace: {{ $ns }}
+data:
+  10-tls.conf: |
+    listeners.tcp = none
+    listeners.ssl.default = 5671
+    ssl_options.cacertfile = /tls/ca.crt
+    ssl_options.certfile = /tls/tls.crt
+    ssl_options.keyfile = /tls/tls.key
+    ssl_options.verify = verify_none
+    ssl_options.fail_if_no_peer_cert = false
+    management.ssl.port = 15671
+    management.ssl.cacertfile = /tls/ca.crt
+    management.ssl.certfile = /tls/tls.crt
+    management.ssl.keyfile = /tls/tls.key
+---
+# OpenSearch: the node listens on the pod's loopback; this proxy is the only thing reachable from the network.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edunexus-opensearch-proxy
+  namespace: {{ $ns }}
+data:
+  default.conf: |
+    server {
+      listen 9200 ssl;
+      ssl_certificate     /tls/tls.crt;
+      ssl_certificate_key /tls/tls.key;
+      ssl_protocols       TLSv1.2 TLSv1.3;
+      client_max_body_size 100m;
+      location / {
+        proxy_pass http://127.0.0.1:9201;
+        proxy_set_header Host $host;
+        proxy_read_timeout 120s;
+      }
+    }
+{{- end }}

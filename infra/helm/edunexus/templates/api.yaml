@@ -31,7 +31,14 @@ spec:
             - { name: Auth__Audience, value: {{ .Values.api.auth.audience | quote }} }
             - { name: Auth__EnableDevToken, value: "false" }
             - { name: RabbitMQ__Host, value: {{ .Values.api.rabbitmq.host | quote }} }
+            {{- if .Values.tls.enabled }}
+            - { name: Tls__CaFile, value: /etc/edunexus/tls/ca.crt }
+            - { name: RabbitMQ__Port, value: "5671" }
+            - { name: RabbitMQ__Tls, value: "true" }
+            - { name: Storage__Secure, value: "true" }
+            {{- else }}
             - { name: RabbitMQ__Port, value: {{ .Values.api.rabbitmq.port | quote }} }
+            {{- end }}
             - { name: Storage__Endpoint, value: {{ .Values.api.storage.endpoint | quote }} }
             - { name: Storage__AccessKey, value: minio }
             - name: Storage__SecretKey
@@ -40,7 +47,7 @@ spec:
             - { name: RateLimiting__PermitsPerMinute, value: {{ .Values.api.rateLimiting.permitsPerMinute | quote }} }
             - { name: RateLimiting__ExpensivePermitsPerMinute, value: {{ .Values.api.rateLimiting.expensivePermitsPerMinute | quote }} }
             {{- if .Values.api.rateLimiting.redis }}
-            - { name: RateLimiting__Redis__ConnectionString, value: {{ .Values.api.rateLimiting.redis | quote }} }
+            - { name: RateLimiting__Redis__ConnectionString, value: {{ if .Values.tls.enabled }}{{ printf "%s,ssl=true" .Values.api.rateLimiting.redis | quote }}{{ else }}{{ .Values.api.rateLimiting.redis | quote }}{{ end }} }
             {{- end }}
             {{- range $i, $cidr := splitList "," .Values.api.trustedProxyNetworks }}
             - { name: ForwardedHeaders__KnownNetworks__{{ $i }}, value: {{ trim $cidr | quote }} }
@@ -50,7 +57,7 @@ spec:
             - { name: AI__Model, value: {{ .Values.api.ai.model | quote }} }
             - name: AI__ApiKey
               valueFrom: { secretKeyRef: { name: {{ .Values.api.secretName }}, key: ai-api-key, optional: true } }
-            - { name: AI__OpenSearchUrl, value: {{ .Values.api.ai.openSearchUrl | quote }} }
+            - { name: AI__OpenSearchUrl, value: {{ if .Values.tls.enabled }}{{ .Values.api.ai.openSearchUrl | replace "http://" "https://" | quote }}{{ else }}{{ .Values.api.ai.openSearchUrl | quote }}{{ end }} }
           livenessProbe:
             httpGet: { path: /health, port: {{ .Values.api.port }} }
             initialDelaySeconds: 20
@@ -63,6 +70,18 @@ spec:
           resources:
             requests: { cpu: 250m, memory: 512Mi }
             limits: { cpu: "2", memory: 2Gi }
+          {{- if .Values.tls.enabled }}
+          volumeMounts:
+            - { name: tls-ca, mountPath: /etc/edunexus/tls, readOnly: true }
+          {{- end }}
+      {{- if .Values.tls.enabled }}
+      volumes:
+        - name: tls-ca
+          # Only the CA certificate (the public half) is mounted, never a key.
+          secret:
+            secretName: edunexus-tls-api
+            items: [{ key: ca.crt, path: ca.crt }]
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

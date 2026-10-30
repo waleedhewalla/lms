@@ -56,7 +56,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | Network security management | 🟡 | See the network details below this table. |
 | Mobile devices security | 🔧 | No native mobile app yet; the web app is responsive. Device management is the institution's. |
 | Data and information protection | ✅ / 🟡 | See the data-protection details below this table. |
-| Cryptography | 🟡 / ❌ | TLS terminates at the institution's ingress or reverse proxy (`DEPLOYMENT.md`). The identity provider requires HTTPS in Production (`RequireHttpsMetadata`). Webhooks are signed with HMAC (`WebhookSigner.cs`). Encryption at rest: database and object-storage volumes must be encrypted by the operator. Service-to-service TLS inside the cluster is not enforced by the chart (❌ G4). |
+| Cryptography | 🟡 / ❌ | TLS terminates at the institution's ingress or reverse proxy (`DEPLOYMENT.md`). The identity provider requires HTTPS in Production (`RequireHttpsMetadata`). Webhooks are signed with HMAC (`WebhookSigner.cs`). Encryption at rest: database and object-storage volumes must be encrypted by the operator. Inside the cluster, `tls.enabled=true` encrypts every connection from the API to Postgres, Redis, RabbitMQ, MinIO and OpenSearch, with certificates checked against the site CA and the service name (G4, off by default; see `DEPLOYMENT.md` section 3c). The hop from the ingress to web and API, and the identity provider, stay the operator's. |
 | Backup and recovery management | 🟡 | PostgreSQL base backups plus WAL archiving for point-in-time recovery, with a recovery drill recorded in `infra/postgres/RUNBOOK.md`. Scheduling, off-site copies and restore testing are the operator's. |
 | Vulnerability management | ✅ / 🔧 | CI blocks merges on vulnerable dependencies. Example: Next.js was upgraded within the same day a critical RCE advisory (GHSA-2464-fhr4-w9xw) was caught. Patching running sites is the operator's job: redeploy release images. |
 | Penetration testing | 🟡 | Scope and rules of engagement in `PENTEST-SCOPE.md`. A human pen-test is required before production student data (GA gate 14). |
@@ -75,7 +75,8 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 - **Lifecycle:** joiner, mover and leaver changes are made in the identity provider.
 
 **Network security management in detail:**
-- Ingress and TLS are configured by the operator.
+- Ingress and TLS at the edge are configured by the operator.
+- Inside the cluster the chart can require TLS between the API and its data services (`tls.enabled`) and can limit who may reach them (`networkPolicy.enabled`).
 - The API adds:
   - CORS limited to the configured web origin;
   - `X-Forwarded-*` trusted only from private-network proxies;
@@ -164,7 +165,7 @@ ECC-2:2024 has 4 main domains: Governance, Defense, Resilience, and Third-Party 
 | G1 | ~~No one-click personal-data export~~ | **Done:** self-service and privacy-officer export, audited | ✅ |
 | G2 | ~~No person-level erasure or pseudonymisation~~ | **Done:** erasure requests with two-person approval, a legal-hold check and pseudonymisation; institutional records are kept | ✅ |
 | G3 | ~~No privacy notice in the web app~~ | **Done:** published `PRIVACY` policy shown publicly at `/privacy` | ✅ |
-| G4 | No enforced TLS inside the cluster | A Helm option for TLS or a service mesh (mTLS) between API, database, broker, storage and search; document Postgres `sslmode=require` | Medium |
+| G4 | ~~No enforced TLS inside the cluster~~ | **Done:** Helm `tls.enabled` makes Postgres, Redis, RabbitMQ, MinIO and OpenSearch accept TLS only; the API verifies each against the site CA and the service name (Postgres `VerifyFull`). Certificates come from cert-manager or from Secrets you supply (air-gapped sites; `infra/tls/gen-certs.sh`). Optional `networkPolicy.enabled` limits the data services to the API. Known limits: server authentication only (no client certificates, so passwords still apply); OpenSearch is protected by a TLS proxy in front of its loopback listener, not by its security plugin; the ingress to web/API hop and the identity provider are the operator's | ✅ |
 | G5 | ~~Rate limits are per instance~~ | **Done:** request counts are kept in Redis (when `RateLimiting__Redis__ConnectionString` is set, which the Helm chart does by default), so replicas share one budget. If Redis fails the API keeps serving and counts per instance until it returns, so availability never depends on Redis | ✅ |
 | G6 | ~~MinIO SDK may hide errors (found during records work)~~ | **Done:** every storage claim is checked by an independent signed request: the bucket exists, an object is gone (only `NoSuchKey` counts, not a missing bucket), an uploaded file exists with the declared size. Failures answer 503 or leave disposal pending. Known limit: the client-declared SHA-256 is recorded, not recomputed, and files attached as evidence are not yet removed by records disposal | ✅ |
 | — | National e-signature (Nafath / UAE PASS) | Needs a licensed trust service provider (e.g. emdha); waiting on a vendor decision | Product roadmap |

@@ -112,6 +112,14 @@ Feature-complete release of the delivery plan (Waves A–G).
 - The Helm default for trusted proxy networks now includes the IPv6 private range (`fc00::/7`), matching the code default.
 - New dependency: `StackExchange.Redis` (maintained, MIT; passes the vulnerable-package gate).
 
+## Encryption inside the cluster (G4)
+- New Helm option `tls.enabled` (off by default): Postgres, Redis, RabbitMQ, MinIO and OpenSearch accept TLS only, and the API checks each one's certificate against the site CA and the service name. See `DEPLOYMENT.md` section 3c.
+- Certificates from cert-manager (`tls.mode=certManager`, optionally your own `tls.issuerRef`) or from Secrets you create (`tls.mode=existingSecret`, with `infra/tls/gen-certs.sh`) for air-gapped sites.
+- API: `Tls__CaFile` makes Postgres (`VerifyFull`), RabbitMQ (`RabbitMQ__Tls`), MinIO (`Storage__Secure`), OpenSearch and Redis (`ssl=true`) verified against that CA; the system roots are not used for them and checking is never switched off. The three RabbitMQ connection blocks now share one builder.
+- Optional `networkPolicy.enabled`: only the API and the migration job may reach the data services.
+- CI: the chart is rendered in both modes and checked for any plaintext path; a new `tls-integration` job tests Postgres and Redis with a private CA (right CA, wrong CA, plaintext refused).
+- Known limits: server authentication only; OpenSearch is behind a TLS proxy rather than its security plugin; the ingress to web/API hop and the identity provider are the operator's. Not exercised end to end in CI: RabbitMQ, MinIO and OpenSearch run the same trust code (tested with a real TLS listener) but are not started with TLS in CI, and the chart has not been installed on a live cluster.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.

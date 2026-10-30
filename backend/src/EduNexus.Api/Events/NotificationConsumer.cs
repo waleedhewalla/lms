@@ -16,7 +16,8 @@ namespace EduNexus.Api.Events;
 public sealed class NotificationConsumer(
     IServiceScopeFactory scopes,
     IOptions<RabbitMqOptions> options,
-    ILogger<NotificationConsumer> log) : BackgroundService
+    ILogger<NotificationConsumer> log,
+    Tls.PrivateCa? ca = null) : BackgroundService
 {
     private const string Queue = "edunexus.notifications";
     private static readonly string[] Keys =
@@ -30,12 +31,7 @@ public sealed class NotificationConsumer(
         {
             try
             {
-                var factory = new ConnectionFactory
-                {
-                    HostName = cfg.Host, Port = cfg.Port,
-                    UserName = cfg.Username, Password = cfg.Password,
-                    AutomaticRecoveryEnabled = true,
-                };
+                var factory = RabbitMqConnection.Factory(cfg, ca);
                 await using var connection = await factory.CreateConnectionAsync(stoppingToken);
                 await using var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
                 await channel.ExchangeDeclareAsync(cfg.Exchange, ExchangeType.Topic, durable: true, cancellationToken: stoppingToken);

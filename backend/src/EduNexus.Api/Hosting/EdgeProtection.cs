@@ -57,7 +57,7 @@ public static class EdgeProtection
             services.AddSingleton<IRateLimitStore>(sp => sp.GetRequiredService<LocalRateLimitStore>());
         else
         {
-            services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(RedisOptions(redisConnection)));
+            services.AddSingleton<IConnectionMultiplexer>(sp => ConnectionMultiplexer.Connect(RedisOptions(redisConnection, sp.GetService<Tls.PrivateCa>())));
             services.AddSingleton<IRateLimitStore>(sp => new ResilientRateLimitStore(
                 new RedisRateLimitStore(sp.GetRequiredService<IConnectionMultiplexer>(), sp.GetRequiredService<TimeProvider>()),
                 sp.GetRequiredService<LocalRateLimitStore>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<ResilientRateLimitStore>>()));
@@ -69,9 +69,12 @@ public static class EdgeProtection
     /// Redis options for the limiter: never block startup or a request on Redis. Timeouts are short unless the connection
     /// string sets them, and the client keeps retrying the connection in the background.
     /// </summary>
-    internal static ConfigurationOptions RedisOptions(string connectionString)
+    internal static ConfigurationOptions RedisOptions(string connectionString, Tls.PrivateCa? ca = null)
     {
         var o = ConfigurationOptions.Parse(connectionString);
+        // "ssl=true" in the connection string turns TLS on; the site CA (if configured) is what the server must chain to.
+        if (o.Ssl && ca is not null)
+            o.CertificateValidation += (_, cert, chain, errors) => ca.Validate(cert, chain, errors, null);
         o.AbortOnConnectFail = false;
         if (!connectionString.Contains("connectTimeout", StringComparison.OrdinalIgnoreCase)) o.ConnectTimeout = 500;
         if (!connectionString.Contains("syncTimeout", StringComparison.OrdinalIgnoreCase)) o.SyncTimeout = 150;

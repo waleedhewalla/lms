@@ -51,6 +51,30 @@ postgres:
   storage: 20Gi
   walArchiveSize: 10Gi
   backupSize: 20Gi
+# Encryption between the API and its data services (Postgres, Redis, RabbitMQ, MinIO, OpenSearch). Off by default so
+# existing installs do not change. When on, every service accepts TLS only, the API checks each certificate against the
+# site CA and the service name, and plaintext connections are refused. Not covered: the ingress to web/API hop and the
+# external identity provider (operator-managed; see DEPLOYMENT.md).
+tls:
+  enabled: false
+  # certManager:    the chart asks cert-manager (must be installed) for a CA and one certificate per service.
+  # existingSecret: you create the Secrets yourself (air-gapped sites, or your own CA); the chart creates no Certificate.
+  #                 Each Secret edunexus-tls-<service> needs tls.crt, tls.key and ca.crt; edunexus-tls-api needs only
+  #                 ca.crt. Services: postgres, redis, rabbitmq, minio, opensearch, api. infra/tls/gen-certs.sh makes them.
+  mode: certManager
+  # certManager mode: sign the service certificates with this issuer instead of the chart's own CA, e.g.
+  # { name: corp-ca, kind: ClusterIssuer }. The issuer must hand back its CA certificate in the Secret (ca.crt), as
+  # cert-manager's CA and Vault issuers do.
+  issuerRef: {}
+  duration: 2160h      # 90 days
+  renewBefore: 360h    # renew 15 days before expiry
+  caDuration: 87600h   # chart-created CA: 10 years
+  # Sidecar in the OpenSearch pod that terminates TLS; OpenSearch itself then listens on the pod's loopback only.
+  opensearchProxyImage: nginx:1.27-alpine
+# Optional: only the API and the migration job may open connections to the data services. Needs a CNI that enforces
+# NetworkPolicy. Independent of tls.enabled.
+networkPolicy:
+  enabled: false
 redis: { image: redis:7, storage: 5Gi }
 rabbitmq: { image: rabbitmq:3-management }
 minio: { image: minio/minio, storage: 50Gi }

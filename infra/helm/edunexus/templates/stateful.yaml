@@ -23,6 +23,12 @@ spec:
             - -carchive_mode=on
             - -carchive_timeout=60
             - -carchive_command=test ! -f /walarchive/%f && cp %p /walarchive/%f
+            {{- if .Values.tls.enabled }}
+            - -cssl=on
+            - -cssl_cert_file=/tls/tls.crt
+            - -cssl_key_file=/tls/tls.key
+            - -chba_file=/etc/edunexus-hba/pg_hba.conf
+            {{- end }}
           env:
             - { name: POSTGRES_DB, value: edunexus }
             - { name: POSTGRES_USER, value: edunexus }
@@ -33,6 +39,19 @@ spec:
             - { name: data, mountPath: /var/lib/postgresql/data }
             - { name: walarchive, mountPath: /walarchive }
             - { name: backups, mountPath: /backups }
+            {{- if .Values.tls.enabled }}
+            - { name: tls, mountPath: /tls, readOnly: true }
+            - { name: hba, mountPath: /etc/edunexus-hba, readOnly: true }
+            {{- end }}
+      {{- if .Values.tls.enabled }}
+      # 999 is the postgres user's group in the image: Postgres insists the key is not readable by anyone else.
+      securityContext: { fsGroup: 999 }
+      volumes:
+        - name: tls
+          secret: { secretName: edunexus-tls-postgres, defaultMode: 0440 }
+        - name: hba
+          configMap: { name: edunexus-postgres-hba }
+      {{- end }}
   volumeClaimTemplates:
     - metadata: { name: data }
       spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.postgres.storage }} } } }
@@ -67,9 +86,25 @@ spec:
       containers:
         - name: redis
           image: "{{ .Values.registry }}{{ .Values.redis.image }}"
+          {{- if .Values.tls.enabled }}
+          # TLS only: the plaintext port is off. Clients are checked by name and CA; they present no certificate.
+          args: [redis-server, --appendonly, "yes", --port, "0", --tls-port, "6379",
+                 --tls-cert-file, /tls/tls.crt, --tls-key-file, /tls/tls.key, --tls-ca-cert-file, /tls/ca.crt, --tls-auth-clients, "no"]
+          {{- else }}
           args: [redis-server, --appendonly, "yes"]
+          {{- end }}
           ports: [{ containerPort: 6379 }]
-          volumeMounts: [{ name: data, mountPath: /data }]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            {{- if .Values.tls.enabled }}
+            - { name: tls, mountPath: /tls, readOnly: true }
+            {{- end }}
+      {{- if .Values.tls.enabled }}
+      securityContext: { fsGroup: 999 }
+      volumes:
+        - name: tls
+          secret: { secretName: edunexus-tls-redis, defaultMode: 0440 }
+      {{- end }}
   volumeClaimTemplates:
     - metadata: { name: data }
       spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.redis.storage }} } } }
@@ -99,7 +134,20 @@ spec:
       containers:
         - name: rabbitmq
           image: "{{ .Values.registry }}{{ .Values.rabbitmq.image }}"
+          {{- if .Values.tls.enabled }}
+          ports: [{ containerPort: 5671 }, { containerPort: 15671 }]
+          volumeMounts:
+            - { name: tls, mountPath: /tls, readOnly: true }
+            - { name: tlsconf, mountPath: /etc/rabbitmq/conf.d/10-tls.conf, subPath: 10-tls.conf, readOnly: true }
+      securityContext: { fsGroup: 999 }
+      volumes:
+        - name: tls
+          secret: { secretName: edunexus-tls-rabbitmq, defaultMode: 0440 }
+        - name: tlsconf
+          configMap: { name: edunexus-rabbitmq-tls }
+          {{- else }}
           ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -108,7 +156,11 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   selector: { app: edunexus-rabbitmq }
+  {{- if .Values.tls.enabled }}
+  ports: [{ port: 5671 }, { port: 15671 }]
+  {{- else }}
   ports: [{ port: 5672 }, { port: 15672 }]
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -127,13 +179,31 @@ spec:
       containers:
         - name: minio
           image: "{{ .Values.registry }}{{ .Values.minio.image }}"
+          {{- if .Values.tls.enabled }}
+          args: [server, /data, --console-address, ":9001", --certs-dir, /certs]
+          {{- else }}
           args: [server, /data, --console-address, ":9001"]
+          {{- end }}
           env:
             - { name: MINIO_ROOT_USER, value: minio }
             - name: MINIO_ROOT_PASSWORD
               valueFrom: { secretKeyRef: { name: edunexus-minio, key: root-password } }
           ports: [{ containerPort: 9000 }, { containerPort: 9001 }]
-          volumeMounts: [{ name: data, mountPath: /data }]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            {{- if .Values.tls.enabled }}
+            - { name: tls, mountPath: /certs, readOnly: true }
+            {{- end }}
+      {{- if .Values.tls.enabled }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: edunexus-tls-minio
+            # MinIO looks for public.crt and private.key (and CAs/ for trusted CAs) in its certs directory.
+            items:
+              - { key: tls.crt, path: public.crt }
+              - { key: tls.key, path: private.key }
+      {{- end }}
   volumeClaimTemplates:
     - metadata: { name: data }
       spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.minio.storage }} } } }
@@ -168,8 +238,28 @@ spec:
             - { name: discovery.type, value: single-node }
             - { name: DISABLE_SECURITY_PLUGIN, value: "true" }
             - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+            {{- if .Values.tls.enabled }}
+            # Reachable only through the TLS proxy below (same pod): the node itself listens on loopback.
+            - { name: network.host, value: "127.0.0.1" }
+            - { name: http.port, value: "9201" }
+            {{- end }}
+          {{- if not .Values.tls.enabled }}
           ports: [{ containerPort: 9200 }]
+          {{- end }}
           volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
+        {{- if .Values.tls.enabled }}
+        - name: tls-proxy
+          image: "{{ .Values.registry }}{{ .Values.tls.opensearchProxyImage }}"
+          ports: [{ containerPort: 9200 }]
+          volumeMounts:
+            - { name: tls, mountPath: /tls, readOnly: true }
+            - { name: proxyconf, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true }
+      volumes:
+        - name: tls
+          secret: { secretName: edunexus-tls-opensearch, defaultMode: 0440 }
+        - name: proxyconf
+          configMap: { name: edunexus-opensearch-proxy }
+        {{- end }}
   volumeClaimTemplates:
     - metadata: { name: data }
       spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: {{ .Values.opensearch.storage }} } } }

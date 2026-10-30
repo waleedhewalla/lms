@@ -2,7 +2,7 @@
 # 1. On a connected machine, mirror every image in values.yaml:
 #      for img in postgres:16 redis:7 rabbitmq:3-management minio/minio \
 #        opensearchproject/opensearch:2 prom/prometheus:v3.1.0 grafana/grafana:11.4.0 \
-#        edunexus-api:1.3.0 edunexus-web:1.3.0; do
+#        edunexus-api:1.3.0 edunexus-web:1.3.0 nginx:1.27-alpine; do   # nginx only if you turn on tls.enabled
 #        docker pull $img
 #        docker tag $img registry.local:5000/$img
 #        docker push registry.local:5000/$img
@@ -22,6 +22,9 @@
 #      kubectl -n edunexus create secret generic edunexus-api \
 #        --from-literal=connection="Host=edunexus-postgres;Port=5432;Database=edunexus;Username=edunexus;Password=$PGPASS" \
 #        --from-literal=ai-api-key=""   # optional, only for AI.Provider=OpenAI
+# 3b. Optional, encryption inside the cluster (see docs/10-roadmap/DEPLOYMENT.md section 3c). No cert-manager needed:
+#      infra/tls/gen-certs.sh tls-out edunexus      # prints the kubectl create secret commands; run them
+#      then add to the install:  --set tls.enabled=true --set tls.mode=existingSecret
 # 4. Install with site values:
 #      helm install edunexus ./infra/helm/edunexus -n edunexus \
 #        --set registry=registry.local:5000/ \

@@ -17,7 +17,8 @@ public sealed class IntegrationDispatcher(
     IServiceScopeFactory scopes,
     IOptions<Api.Events.RabbitMqOptions> options,
     IHttpClientFactory httpFactory,
-    ILogger<IntegrationDispatcher> log) : BackgroundService
+    ILogger<IntegrationDispatcher> log,
+    Tls.PrivateCa? ca = null) : BackgroundService
 {
     private const string Queue = "edunexus.integrations";
 
@@ -28,12 +29,7 @@ public sealed class IntegrationDispatcher(
         {
             try
             {
-                var factory = new ConnectionFactory
-                {
-                    HostName = cfg.Host, Port = cfg.Port,
-                    UserName = cfg.Username, Password = cfg.Password,
-                    AutomaticRecoveryEnabled = true,
-                };
+                var factory = Api.Events.RabbitMqConnection.Factory(cfg, ca);
                 await using var connection = await factory.CreateConnectionAsync(stoppingToken);
                 await using var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
                 await channel.ExchangeDeclareAsync(cfg.Exchange, ExchangeType.Topic, durable: true, cancellationToken: stoppingToken);

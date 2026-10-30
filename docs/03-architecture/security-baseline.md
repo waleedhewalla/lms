@@ -44,4 +44,4 @@
 ## Still open (needs customer env / specialists)
 - Human pen-test against the scope in `PENTEST-SCOPE.md`.
 - Customer IdP wiring (turnkey Keycloak realm: `infra/keycloak/realm-edunexus.json`); Vault/SOPS (ADR-002);
-  TLS termination per site; image signing for the air-gap bundle.
+  TLS termination at the edge per site (in-cluster TLS is `tls.enabled`); image signing for the air-gap bundle.
