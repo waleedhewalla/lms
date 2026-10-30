@@ -105,7 +105,14 @@ Feature-complete release of the delivery plan (Waves A–G).
 - Tests no longer depend on a MinIO server (an in-memory fake with scripted failures), and a test fails the build if an empty `catch { }` is added to the backend.
 - Known limits: the SHA-256 a client declares is recorded, not recomputed; files attached as evidence are not removed by records disposal.
 
+## Shared rate limits (G5)
+- With several API replicas the limit used to multiply (two replicas allowed twice the budget). The API now counts requests in Redis when `RateLimiting__Redis__ConnectionString` is set (the Helm chart sets it to its own Redis by default), so all replicas share one budget per signed-in user, per minute. Windows are aligned to the clock, so every replica agrees where a minute starts.
+- Redis is optional and never in the way: unset, each replica counts for itself, as before; set but unreachable, the API logs a warning, counts per replica for ten seconds at a time, and keeps serving.
+- The response to an over-limit caller is unchanged: 429 with `Retry-After`.
+- The Helm default for trusted proxy networks now includes the IPv6 private range (`fc00::/7`), matching the code default.
+- New dependency: `StackExchange.Redis` (maintained, MIT; passes the vulnerable-package gate).
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
-- Rate limits are kept in memory per API instance. With several replicas, the effective limit is the per-instance limit times the replica count.
+- The rate limit is protection against runaway clients, not a security boundary: put a limit on the ingress for anonymous traffic as well.

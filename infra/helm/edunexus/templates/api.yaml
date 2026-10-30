@@ -39,6 +39,9 @@ spec:
             - { name: Cors__AllowedOrigins, value: {{ .Values.web.publicUrl | quote }} }
             - { name: RateLimiting__PermitsPerMinute, value: {{ .Values.api.rateLimiting.permitsPerMinute | quote }} }
             - { name: RateLimiting__ExpensivePermitsPerMinute, value: {{ .Values.api.rateLimiting.expensivePermitsPerMinute | quote }} }
+            {{- if .Values.api.rateLimiting.redis }}
+            - { name: RateLimiting__Redis__ConnectionString, value: {{ .Values.api.rateLimiting.redis | quote }} }
+            {{- end }}
             {{- range $i, $cidr := splitList "," .Values.api.trustedProxyNetworks }}
             - { name: ForwardedHeaders__KnownNetworks__{{ $i }}, value: {{ trim $cidr | quote }} }
             {{- end }}

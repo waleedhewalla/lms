@@ -20,8 +20,12 @@ api:
   rateLimiting:
     permitsPerMinute: 600          # per signed-in user (per IP when anonymous)
     expensivePermitsPerMinute: 60  # AI, search, exports, token minting
+    # Count requests in the chart's Redis so every API replica draws on one budget. Without it each replica counts for
+    # itself and the effective limit is the number above times the replicas. Empty it if you do not deploy Redis.
+    # If Redis is down the API keeps serving and counts per replica until it is back.
+    redis: "edunexus-redis:6379,abortConnect=false,connectTimeout=300,asyncTimeout=150,syncTimeout=150"
   # CIDRs of proxies whose X-Forwarded-For is trusted (the ingress controller's pod network).
-  trustedProxyNetworks: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  trustedProxyNetworks: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
   storage:
     endpoint: edunexus-minio:9000
   ai:

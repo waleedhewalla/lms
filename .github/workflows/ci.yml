@@ -38,6 +38,13 @@ jobs:
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s --health-retries 10
+      # The shared rate-limit store tests (RateLimitStoreTests) count in a real Redis on 6381.
+      redis:
+        image: redis:7
+        ports: ['6381:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-retries 10
       # AI tests (Ai_AskEcho_LogsInteraction) index and search via OpenSearch on 9201.
       opensearch:
         image: opensearchproject/opensearch:2
@@ -56,6 +63,8 @@ jobs:
         with: { dotnet-version: '${{ env.DOTNET_VERSION }}' }
       - run: dotnet build backend/EduNexus.sln --nologo -v minimal
       - run: dotnet test backend/EduNexus.sln --no-build --nologo -v minimal
+        env:
+          EDUNEXUS_TEST_REDIS: localhost:6381
       - name: No vulnerable NuGet packages (incl. transitive)
         run: |
           dotnet list backend/EduNexus.sln package --vulnerable --include-transitive | tee /tmp/vuln.txt
@@ -103,7 +112,10 @@ jobs:
           grep -q 'kind: Ingress' /tmp/ingress.yaml
           ! grep -q 'CHANGEME' /tmp/default.yaml
           grep -q 'RateLimiting__PermitsPerMinute' /tmp/default.yaml
-          grep -q 'ForwardedHeaders__KnownNetworks__2' /tmp/default.yaml
+          grep -q 'ForwardedHeaders__KnownNetworks__3' /tmp/default.yaml
+          grep -q 'RateLimiting__Redis__ConnectionString' /tmp/default.yaml
+          helm template edunexus infra/helm/edunexus --set api.rateLimiting.redis="" > /tmp/no-redis-limit.yaml
+          ! grep -q 'RateLimiting__Redis__ConnectionString' /tmp/no-redis-limit.yaml
       - name: Keycloak realm import issues the claims the API expects
         run: |
           docker run -d --name kc -p 8081:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
