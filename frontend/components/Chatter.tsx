@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { fmtDate, fmtDay } from "./Ui";
+import { apiBase as appApiBase } from "../lib/config";
 
 export type ActivityType = 'ToDo' | 'Review' | 'Sign' | 'Call' | 'Meeting';
 
@@ -53,9 +54,12 @@ export function Chatter({
   entityId,
   tenantId,
   currentPersonId,
-  apiBase = 'http://localhost:5000',
-  token = '',
+  apiBase: apiBaseProp,
+  token: tokenProp,
 }: ChatterProps) {
+  // Unless a caller says otherwise, talk to the same API as the rest of the app, with the signed-in user's token.
+  const apiBase = apiBaseProp ?? appApiBase();
+  const token = tokenProp ?? (typeof window === 'undefined' ? '' : window.localStorage.getItem('edunexus.token') ?? '');
   const [activeTab, setActiveTab] = useState<'message' | 'internal' | 'activity'>('message');
   const [comments, setComments] = useState<RecordComment[]>([]);
   const [activities, setActivities] = useState<ScheduledActivity[]>([]);

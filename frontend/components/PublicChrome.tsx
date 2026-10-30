@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { claims } from "../lib/oidc";
-import { permissionsOf } from "../lib/modules";
+import { permissionsOf, personIdOf } from "../lib/modules";
 import { BrandMark, LandingIcon } from "./LandingIcon";
 import { useTranslation } from "./TranslationProvider";
 
@@ -20,14 +20,14 @@ const NAV = [
   { href: "/#trust", en: "Trust & compliance", ar: "الثقة والامتثال" },
 ];
 
-export type Session = { name: string; perms: string[] };
+export type Session = { name: string; perms: string[]; personId: string | null };
 
 /** The signed-in session from the stored, unexpired token: undefined while loading, null when signed out. */
 export function useSession(): Session | null | undefined {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   useEffect(() => {
     const c = claims();
-    setSession(c ? { name: String(c.name ?? c.preferred_username ?? c.email ?? c.sub ?? "") || "—", perms: permissionsOf(c) } : null);
+    setSession(c ? { name: String(c.name ?? c.preferred_username ?? c.email ?? c.sub ?? "") || "—", perms: permissionsOf(c), personId: personIdOf(c) } : null);
   }, []);
   return session;
 }
