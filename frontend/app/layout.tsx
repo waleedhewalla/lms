@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./landing.css";
 import { AppLayout } from "../components/AppLayout";
 import { TranslationProvider } from "../components/TranslationProvider";
 
 export const metadata: Metadata = {
-  title: "EduNexus OS V2",
-  description: "Institutional operating system for education",
+  title: "EduNexus — the institutional operating system for education",
+  description: "Correspondence, approvals, committees and boards, policies, accreditation, strategy and records for universities and schools, in Arabic and English.",
 };
 
 export default function RootLayout({
