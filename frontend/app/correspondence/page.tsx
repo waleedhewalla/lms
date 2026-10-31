@@ -79,6 +79,10 @@ export default function CorrespondencePage() {
   const [recipientKind, setRecipientKind] = useState<"To" | "Cc">("To");
   const [parentId, setParentId] = useState<string | null>(null);
 
+  // Financial approval limits (managers of workflows only)
+  const [limits, setLimits] = useState<{ stepId: string; label: string; above: number | null }[]>([]);
+  const [limitEdit, setLimitEdit] = useState<Record<string, string>>({});
+
   // Types, units and the workflow of the selected letter
   const [types, setTypes] = useState<TypeDef[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -108,6 +112,7 @@ export default function CorrespondencePage() {
   const canCloseAny = perms.includes("records:manage");
   const canCreate = perms.includes("correspondence:create");
   const canWrite = canCreate || canStudent;
+  const canManage = perms.includes("workflow:manage");
   const ar = L("en", "ar") === "ar";
   const canSeeConfidential = perms.includes("correspondence:confidential");
   const personId = session?.personId ?? null;
@@ -123,6 +128,22 @@ export default function CorrespondencePage() {
   }), [tenantId, year, type, status, q, canRead]);
 
   useEffect(() => { if (tenantId && session) load(0); }, [tenantId, session]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadLimits = useCallback(() => attempt(setErr, async () => {
+    if (!tenantId || !canManage) return;
+    const r = await api<{ levels: { stepId: string; label: string; above: number | null }[] }>(`/api/correspondence/financial-limits?tenantId=${tenantId}`).catch(() => null);
+    setLimits(r?.levels ?? []);
+    setLimitEdit(Object.fromEntries((r?.levels ?? []).map((l) => [l.stepId, l.above == null ? "" : String(l.above)])));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [tenantId, canManage]);
+  useEffect(() => { if (tenantId && session) loadLimits(); }, [tenantId, session]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveLimits = () => attempt(setErr, async () => {
+    await api("/api/correspondence/financial-limits", { method: "PUT", body: JSON.stringify({
+      tenantId, limits: limits.map((l) => ({ stepId: l.stepId, above: limitEdit[l.stepId]?.trim() ? Number(limitEdit[l.stepId]) : null })) }) });
+    flash("Limits saved. Letters sent from now on follow them.", "حُفظت الحدود. تتبعها المراسلات المرسلة من الآن.");
+    await loadLimits();
+  });
 
   // The catalogue of types and the units letters can be addressed to (both open to anyone who may write).
   useEffect(() => {
@@ -253,10 +274,10 @@ export default function CorrespondencePage() {
         <Card title={parentId ? L("Reply", "رد") : L("New letter", "مراسلة جديدة")} wide>
           <div style={{ display: "grid", gap: "0.75rem" }}>
             {types.length > 0 && !parentId && (
-              <Field label={L("Letter type", "نوع المراسلة")}>
+              <Field label={canCreate ? L("Letter type", "نوع المراسلة") : L("Student service", "الخدمة المطلوبة")}>
                 <select className="input" value={typeCode} onChange={(e) => { setTypeCode(e.target.value); setNewType("Internal"); }}>
                   {canCreate && <option value="">{L("General (choose a reviewer yourself)", "عامة (تختار المراجع بنفسك)")}</option>}
-                  {!typeCode && !canCreate && <option value="">{L("Choose a type", "اختر النوع")}</option>}
+                  {!typeCode && !canCreate && <option value="">{L("Choose a service", "اختر الخدمة")}</option>}
                   {types.map((t) => <option key={t.code} value={t.code}>{typeName(t, ar)}</option>)}
                 </select>
               </Field>)}
@@ -361,6 +382,19 @@ export default function CorrespondencePage() {
             <button type="button" className="btn btn-secondary" disabled={!win.hasNext} onClick={() => load(skip + PAGE_SIZE)}>{L("Next", "التالي")}</button>
           </div>)}
       </Card>}
+
+      {canManage && limits.length > 0 && (
+        <details style={{ margin: "1rem 0" }}>
+          <summary><strong>{L("Financial approval limits", "حدود الاعتماد المالي")}</strong></summary>
+          <p style={{ opacity: 0.8 }}>{L("For each approval level, the amount above which that level must also approve a financial letter. Leave empty for a level that always approves.", "لكل مستوى اعتماد: المبلغ الذي يلزم بعده اعتماد هذا المستوى للمراسلة المالية. اتركه فارغاً للمستوى الذي يعتمد دائماً.")}</p>
+          <Table<(typeof limits)[number]> rows={limits} empty="" columns={[
+            { label: L("Level", "المستوى"), render: (l) => l.label },
+            { label: L("Also approves above (amount)", "يعتمد أيضاً بعد مبلغ"), render: (l) => (
+              <input className="input" type="number" min={0} step="1" aria-label={l.label} value={limitEdit[l.stepId] ?? ""}
+                onChange={(e) => setLimitEdit({ ...limitEdit, [l.stepId]: e.target.value })} />) },
+          ]} />
+          <div style={{ marginTop: "0.5rem" }}><button type="button" className="btn" onClick={saveLimits}>{L("Save limits", "حفظ الحدود")}</button></div>
+        </details>)}
 
       {c && detail && (
         <Card title={`${c.number} · ${c.subject}`} wide>

@@ -78,9 +78,6 @@ test('a student sees only their own letters, and a refusal from the server is ex
   const H = { Authorization: `Bearer ${admin}` };
   const sara = (await (await request.post(`${API}/api/people`, { headers: H, data: { tenantId, type: 'Student', fullName: 'Sara Student' } })).json()).id as string;
   expect((await request.post(`${API}/api/correspondence/types/seed-defaults`, { headers: H, data: { tenantId } })).ok()).toBeTruthy();
-  const types = await (await request.get(`${API}/api/correspondence/types?tenantId=${tenantId}&includeInactive=true`, { headers: H })).json();
-  const studentType = types.find((x: { code: string }) => x.code === 'STUDENT_REQUEST');
-  expect((await request.patch(`${API}/api/correspondence/types/${studentType.id}`, { headers: H, data: { tenantId, isActive: true } })).ok()).toBeTruthy();
 
   const token = await mint(request, tenantId, ['correspondence:student-request'], sara);
   await page.goto('/signin');
@@ -90,7 +87,9 @@ test('a student sees only their own letters, and a refusal from the server is ex
   await expect(page.getByRole('heading', { name: 'Register' })).toHaveCount(0);
 
   await page.getByRole('button', { name: '+ New letter' }).click();
-  await expect(page.getByLabel('Letter type')).toHaveValue('STUDENT_REQUEST');
+  // The student picks the service from a list of student services only.
+  await expect(page.getByLabel('Student service').locator('option')).toHaveText(['Choose a service', 'Student service: statement or certificate', 'Student service: grievance', 'Student service: section change']);
+  await page.getByLabel('Student service').selectOption({ label: 'Student service: statement or certificate' });
   await page.getByLabel('Subject', { exact: true }).fill('Enrolment statement');
   await page.getByLabel('Content', { exact: true }).fill('Please issue a statement.');
   await page.getByRole('button', { name: 'Save draft' }).click();
@@ -99,4 +98,28 @@ test('a student sees only their own letters, and a refusal from the server is ex
   await expect(page.getByRole('alert').filter({ hasText: 'STUDENT_AFFAIRS' })).toBeVisible();
   await page.reload();
   await expect(page.locator('tbody tr', { hasText: 'Enrolment statement' })).toContainText('Draft');
+});
+
+test('a workflow manager sets the financial limit of a level on screen', async ({ page, request }) => {
+  const boot = await mint(request, crypto.randomUUID(), ['tenant:create']);
+  const t = await request.post(`${API}/api/tenants`, { headers: { Authorization: `Bearer ${boot}` }, data: { slug: `e2e-${Date.now().toString(36)}`, name: 'E2E University' } });
+  const tenantId = (await t.json()).id as string;
+  const perms = ['person:create', 'workflow:manage', 'correspondence:read', 'correspondence:create'];
+  const admin = await mint(request, tenantId, perms);
+  const H = { Authorization: `Bearer ${admin}` };
+  expect((await request.post(`${API}/api/correspondence/types/seed-defaults`, { headers: H, data: { tenantId } })).ok()).toBeTruthy();
+  const me = (await (await request.post(`${API}/api/people`, { headers: H, data: { tenantId, type: 'Employee', fullName: 'Manager' } })).json()).id as string;
+
+  const token = await mint(request, tenantId, perms, me);
+  await page.goto('/signin');
+  await page.evaluate(([tk, tn]) => { localStorage.setItem('edunexus.token', tk); localStorage.setItem('edunexus.tenant', tn); }, [token, tenantId]);
+  await page.goto('/correspondence');
+  await page.getByText('Financial approval limits').click();
+  const vp = page.getByLabel('Vice president approval');
+  await expect(vp).toHaveValue('50000');
+  await vp.fill('80000');
+  await page.getByRole('button', { name: 'Save limits' }).click();
+  await expect(page.getByText('Limits saved.')).toBeVisible();
+  const saved = await (await request.get(`${API}/api/correspondence/financial-limits?tenantId=${tenantId}`, { headers: H })).json();
+  expect(saved.levels.find((l: { stepId: string }) => l.stepId === 'vp').above).toBe(80000);
 });

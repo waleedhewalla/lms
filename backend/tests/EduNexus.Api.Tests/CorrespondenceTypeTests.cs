@@ -64,10 +64,10 @@ public sealed class CorrespondenceTypeTests(EduNexusFactory factory) : IClassFix
         var admin = As(tenant, Manager);
 
         var first = await Json(await admin.PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = tenant }));
-        Assert.Equal(12, first.GetProperty("created").GetArrayLength());
+        Assert.Equal(15, first.GetProperty("created").GetArrayLength());
         var types = await admin.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}&includeInactive=true");
-        Assert.Equal(12, types!.Length);
-        Assert.Equal(["ADMIN_MEMO", "ACADEMIC", "FINANCIAL", "INTER_UNIT", "EMPLOYEE_REQUEST", "STUDENT_REQUEST", "DECISION", "CIRCULAR", "INFO_REQUEST", "COLLEGE_ADMIN", "COLLEGE_DEPT", "TO_DEAN"],
+        Assert.Equal(15, types!.Length);
+        Assert.Equal(["ADMIN_MEMO", "ACADEMIC", "FINANCIAL", "INTER_UNIT", "EMPLOYEE_REQUEST", "STUDENT_REQUEST", "STUDENT_STATEMENT", "STUDENT_GRIEVANCE", "STUDENT_SECTION_CHANGE", "DECISION", "CIRCULAR", "INFO_REQUEST", "COLLEGE_ADMIN", "COLLEGE_DEPT", "TO_DEAN"],
             types.Select(t => t.GetProperty("code").GetString()));
         Assert.All(types, t => { Assert.False(string.IsNullOrWhiteSpace(t.GetProperty("nameAr").GetString())); Assert.False(string.IsNullOrWhiteSpace(t.GetProperty("purpose").GetString())); });
 
@@ -101,17 +101,18 @@ public sealed class CorrespondenceTypeTests(EduNexusFactory factory) : IClassFix
         await admin.PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = tenant });
 
         var readerView = await As(tenant, Staff).GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}");
-        Assert.Equal(11, readerView!.Length);                                                // the inactive student type is hidden
+        Assert.Equal(14, readerView!.Length);                                                // the inactive student type is hidden
         var asked = await As(tenant, Staff).GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}&includeInactive=true");
-        Assert.Equal(11, asked!.Length);                                                     // only a manager may ask for the inactive ones
+        Assert.Equal(14, asked!.Length);                                                     // only a manager may ask for the inactive ones
 
         var studentClient = As(tenant, StudentOnly);
-        Assert.Empty((await studentClient.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}"))!);   // allowed to ask, but nothing is switched on for a student yet
+        // A student's dropdown holds the student services, which are switched on; the generic student type is still off.
+        Assert.Equal(["STUDENT_STATEMENT", "STUDENT_GRIEVANCE", "STUDENT_SECTION_CHANGE"], (await studentClient.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}"))!.Select(t => t.GetProperty("code").GetString()));
 
         var student = (await admin.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}&includeInactive=true"))!.Single(t => t.GetProperty("code").GetString() == "STUDENT_REQUEST");
         await admin.PatchAsJsonAsync($"/api/correspondence/types/{student.GetProperty("id").GetGuid()}", new { tenantId = tenant, isActive = true });
         var studentView = await studentClient.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={tenant}");
-        Assert.Equal(["STUDENT_REQUEST"], studentView!.Select(t => t.GetProperty("code").GetString()));
+        Assert.Equal(["STUDENT_REQUEST", "STUDENT_STATEMENT", "STUDENT_GRIEVANCE", "STUDENT_SECTION_CHANGE"], studentView!.Select(t => t.GetProperty("code").GetString()));
 
         Assert.Equal(HttpStatusCode.Forbidden, (await As(tenant, ["person:read"]).GetAsync($"/api/correspondence/types?tenantId={tenant}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await As(Guid.NewGuid(), Staff).GetAsync($"/api/correspondence/types?tenantId={tenant}")).StatusCode);

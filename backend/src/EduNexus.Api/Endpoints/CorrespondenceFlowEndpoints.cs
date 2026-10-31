@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using EduNexus.Api.Auth;
 using EduNexus.Foundation;
 using EduNexus.Infrastructure;
@@ -137,6 +138,45 @@ public static class CorrespondenceFlowEndpoints
             });
         });
 
+        // The money limits of the financial workflow, level by level: the amount above which each level also has to approve.
+        corr.MapGet("/financial-limits", async (AppDbContext db, HttpContext ctx, Guid tenantId, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("workflow:manage") && !ctx.User.HasPermission("correspondence:read")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, tenantId) is { } f) return f;
+            await using var scope = await TenantScope.BeginAsync(db, tenantId, ct);
+            var def = await FinancialDefinitionAsync(db, tenantId, ct);
+            if (def is null) return Results.NotFound(new { error = "The financial workflow was not found. Run seed-defaults first." });
+            var levels = (JsonNode.Parse(def.NodesJson) as JsonArray ?? []).OfType<JsonObject>().Where(n => n["type"]?.GetValue<string>() == "approval")
+                .Select(n => new { stepId = n["id"]?.GetValue<string>(), label = n["label"]?.GetValue<string>(), above = LimitOf(n) });
+            return Results.Ok(new { workflow = def.Code, def.Version, levels });
+        });
+
+        // Sets or clears (null) the limit of any approval level. Saved as a new workflow version.
+        corr.MapPut("/financial-limits", async (AppDbContext db, HttpContext ctx, FinancialLimitsReq req, CancellationToken ct) =>
+        {
+            if (!ctx.User.HasPermission("workflow:manage")) return Results.Forbid();
+            if (ForbiddenIfCrossTenant(ctx, req.TenantId) is { } f) return f;
+            await using var scope = await TenantScope.BeginAsync(db, req.TenantId, ct);
+            var def = await FinancialDefinitionAsync(db, req.TenantId, ct);
+            if (def is null) return Results.NotFound(new { error = "The financial workflow was not found. Run seed-defaults first." });
+            var nodes = JsonNode.Parse(def.NodesJson) as JsonArray ?? [];
+            foreach (var l in req.Limits ?? [])
+            {
+                if (l.Above is < 0 or > 1_000_000_000m) return Results.BadRequest(new { error = "A limit must be between 0 and 1,000,000,000." });
+                var n = nodes.OfType<JsonObject>().FirstOrDefault(x => x["id"]?.GetValue<string>() == l.StepId && x["type"]?.GetValue<string>() == "approval");
+                if (n is null) return Results.BadRequest(new { error = $"'{l.StepId}' is not an approval level of the financial workflow." });
+                if (l.Above is { } v) n["when"] = new JsonObject { ["field"] = "amount", ["op"] = ">", ["value"] = v };
+                else n.Remove("when");
+            }
+            var next = def with { NodesJson = nodes.ToJsonString(), Version = def.Version + 1 };
+            db.Entry(def).CurrentValues.SetValues(next);
+            DomainEvents.Record(db, req.TenantId, "WorkflowDefinitionVersioned", "WorkflowDefinitionVersioned", nameof(WorkflowDefinition), def.Id.ToString(),
+                actorId: await ActingPersonAsync(db, ctx, req.TenantId, ct), details: $"{def.Code} v{next.Version} limits");
+            await db.SaveChangesAsync(ct);
+            await scope.CommitAsync(ct);
+            return Results.Ok(new { workflow = def.Code, next.Version });
+        });
+
         // Replace the steps of a workflow with an edited list (limits, roles, deadlines). Runs in progress follow the new list from the step they are on.
         app.MapPost("/api/workflows/definitions/{id:guid}/new-version", async (AppDbContext db, HttpContext ctx, Guid id, NewWorkflowVersionReq req, CancellationToken ct) =>
         {
@@ -154,6 +194,15 @@ public static class CorrespondenceFlowEndpoints
             await scope.CommitAsync(ct);
             return Results.Ok(next);
         });
+    }
+
+    private static decimal? LimitOf(JsonObject node) =>
+        node["when"] is JsonObject w && w["field"]?.GetValue<string>() == "amount" && w["op"]?.GetValue<string>() == ">" && w["value"] is JsonValue v && v.TryGetValue<decimal>(out var d) ? d : null;
+
+    private static async Task<WorkflowDefinition?> FinancialDefinitionAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
+    {
+        var code = (await db.CorrespondenceTypes.FirstOrDefaultAsync(t => t.TenantId == tenantId && t.Code == "FINANCIAL", ct))?.WorkflowCode ?? "CORR_FINANCIAL";
+        return await db.WorkflowDefinitions.FirstOrDefaultAsync(d => d.TenantId == tenantId && d.Code == code, ct);
     }
 
     /// <summary>Null when the steps are usable; otherwise what is wrong.</summary>
@@ -249,4 +298,6 @@ public static class CorrespondenceFlowEndpoints
 
 public sealed record EditCorrespondenceReq(Guid TenantId, string? Subject, string? Content, string? Priority, decimal? Amount, Guid? TargetUnitId);
 public sealed record CloseCorrespondenceReq(Guid TenantId, string? Reason);
+public sealed record FinancialLimit(string StepId, decimal? Above);
+public sealed record FinancialLimitsReq(Guid TenantId, FinancialLimit[]? Limits);
 public sealed record NewWorkflowVersionReq(Guid TenantId, string? NodesJson, string? Name);

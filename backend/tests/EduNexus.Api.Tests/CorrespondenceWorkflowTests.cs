@@ -21,7 +21,7 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
     private static readonly string[] Records = ["records:manage", "correspondence:read"];
     private static readonly string[] StudentOnly = ["correspondence:student-request"];
 
-    private sealed record World(Guid Tenant, Guid Author, Guid Head, Guid Dean, Guid TargetHead, Guid TargetUnit, Guid College, Guid Sibling, Guid Finance, Guid Vp, Guid President, Guid Hr, Guid StudentAffairs);
+    private sealed record World(Guid Tenant, Guid Author, Guid Head, Guid Dean, Guid TargetHead, Guid TargetUnit, Guid College, Guid Sibling, Guid Finance, Guid Vp, Guid President, Guid Hr, Guid StudentAffairs, Guid AdminAffairs);
 
     private HttpClient As(Guid tenant, string[] perms, Guid? person = null)
     {
@@ -34,19 +34,21 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
     private async Task<T> Db<T>(Func<AppDbContext, Task<T>> work) { using var s = factory.Services.CreateScope(); return await work(s.ServiceProvider.GetRequiredService<AppDbContext>()); }
     private static async Task<JsonElement> Json(HttpResponseMessage r) => await r.Content.ReadFromJsonAsync<JsonElement>();
 
-    private async Task<World> BuildAsync(bool seed = true, bool withFinanceRoles = true)
+    private async Task<World> BuildAsync(bool seed = true, bool withFinanceRoles = true, bool withAdminAffairs = true)
     {
         var tenant = (await Json(await As(Guid.NewGuid(), Setup).PostAsJsonAsync("/api/tenants", new { slug = $"w-{Guid.NewGuid():N}", name = "Flow Uni" }))).GetProperty("id").GetGuid();
         Guid P(string name) { var p = new Person(Guid.NewGuid(), tenant, PersonType.Employee, name, null, true, DateTimeOffset.UtcNow); Db(async db => { db.People.Add(p); await db.SaveChangesAsync(); return 0; }).GetAwaiter().GetResult(); return p.Id; }
-        var (head, dean, targetHead, fin, vp, pres, hr, sa) = (P("Head"), P("Dean"), P("TargetHead"), P("Finance"), P("Vp"), P("President"), P("Hr"), P("StudentAffairs"));
+        var (head, dean, targetHead, fin, vp, pres, hr, sa, aa) = (P("Head"), P("Dean"), P("TargetHead"), P("Finance"), P("Vp"), P("President"), P("Hr"), P("StudentAffairs"), P("AdminAffairs"));
         var college = OrganizationalUnit.Create(tenant, "COL", "College", null, dean);
         var dept = OrganizationalUnit.Create(tenant, "DEP", "Department", college.Id, head);
         var target = OrganizationalUnit.Create(tenant, "TGT", "Target", null, targetHead);
         var sibling = OrganizationalUnit.Create(tenant, "SIB", "Sibling department", college.Id, targetHead);
+        var affairs = withAdminAffairs ? OrganizationalUnit.Create(tenant, "ADMIN_AFFAIRS", "Administrative affairs", college.Id, aa) : null;
         var author = new Person(Guid.NewGuid(), tenant, PersonType.Employee, "Author", null, true, DateTimeOffset.UtcNow, dept.Id);
         await Db(async db =>
         {
             db.OrganizationalUnits.AddRange(college, dept, target, sibling);
+            if (affairs is not null) db.OrganizationalUnits.Add(affairs);
             db.People.Add(author);
             if (withFinanceRoles)
                 foreach (var (code, who) in new[] { ("FINANCE_MANAGER", fin), ("VP_ADMIN_FINANCE", vp), ("PRESIDENT", pres), ("HR_MANAGER", hr), ("STUDENT_AFFAIRS", sa) })
@@ -59,7 +61,7 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
             return 0;
         });
         if (seed) Assert.Equal(HttpStatusCode.OK, (await As(tenant, Manager).PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = tenant })).StatusCode);
-        return new World(tenant, author.Id, head, dean, targetHead, target.Id, college.Id, sibling.Id, fin, vp, pres, hr, sa);
+        return new World(tenant, author.Id, head, dean, targetHead, target.Id, college.Id, sibling.Id, fin, vp, pres, hr, sa, aa);
     }
 
     private async Task<Guid> CreateAsync(World w, string typeCode, decimal? amount = null, Guid? unit = null, Guid? to = null, string priority = "Normal")
@@ -89,7 +91,7 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
     {
         var w = await BuildAsync();
         var codes = await Db(db => db.WorkflowDefinitions.Where(d => d.TenantId == w.Tenant).Select(d => d.Code).ToListAsync());
-        Assert.Equal(12, codes.Count(c => c.StartsWith("CORR_")));
+        Assert.Equal(15, codes.Count(c => c.StartsWith("CORR_")));
         var again = await Json(await As(w.Tenant, Manager).PostAsJsonAsync("/api/correspondence/types/seed-defaults", new { tenantId = w.Tenant }));
         Assert.Empty(again.GetProperty("workflowsCreated").EnumerateArray());
     }
@@ -111,11 +113,16 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
         Assert.Equal(CorrespondenceStatus.Submitted, await StatusAsync(id));
         Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, second, true)).StatusCode);
 
+        // The last step belongs to the college's administrative affairs unit, which closes the file.
+        Assert.Equal(CorrespondenceStatus.Submitted, await StatusAsync(id));
+        var closing = await PendingAsync(w.Tenant, id);
+        Assert.Equal(w.AdminAffairs, closing.AssigneeId);
+        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, closing, true)).StatusCode);
         Assert.Equal(CorrespondenceStatus.Closed, await StatusAsync(id));
         Assert.True(await Db(db => db.Notifications.AnyAsync(n => n.PersonId == w.Author && n.Title.StartsWith("Completed"))));
 
         var history = await Json(await As(w.Tenant, Writer, w.Author).GetAsync($"/api/correspondence/{id}/history?tenantId={w.Tenant}"));
-        Assert.Equal(2, history.GetProperty("steps").GetArrayLength());
+        Assert.Equal(3, history.GetProperty("steps").GetArrayLength());
         Assert.Contains(history.GetProperty("events").EnumerateArray(), e => e.GetProperty("action").GetString() == "WorkflowCompleted");
         Assert.Contains(history.GetProperty("steps").EnumerateArray(), s => s.GetProperty("decidedByName").GetString() == "Head");
     }
@@ -253,15 +260,15 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
             Assert.Equal(CorrespondenceStatus.Closed, await StatusAsync(id));
             return seen;
         }
-        Assert.Equal([w.Head, w.Finance, w.TargetHead], await Chain(10_000m));
-        Assert.Equal([w.Head, w.Finance, w.Vp, w.TargetHead], await Chain(100_000m));
-        Assert.Equal([w.Head, w.Finance, w.Vp, w.President, w.TargetHead], await Chain(300_000m));
+        Assert.Equal([w.Head, w.Finance, w.TargetHead, w.AdminAffairs], await Chain(10_000m));
+        Assert.Equal([w.Head, w.Finance, w.Vp, w.TargetHead, w.AdminAffairs], await Chain(100_000m));
+        Assert.Equal([w.Head, w.Finance, w.Vp, w.President, w.TargetHead, w.AdminAffairs], await Chain(300_000m));
         // The limit is the university's to set: raise the first one and a letter of 100,000 no longer needs the VP.
         var def = await Db(db => db.WorkflowDefinitions.SingleAsync(d => d.TenantId == w.Tenant && d.Code == "CORR_FINANCIAL"));
         var edited = def.NodesJson.Replace("50000", "500000");
         var put = await As(w.Tenant, Manager).PostAsJsonAsync($"/api/workflows/definitions/{def.Id}/new-version", new { tenantId = w.Tenant, nodesJson = edited });
         Assert.Equal(2, (await Json(put)).GetProperty("version").GetInt32());
-        Assert.Equal([w.Head, w.Finance, w.TargetHead], await Chain(100_000m));
+        Assert.Equal([w.Head, w.Finance, w.TargetHead, w.AdminAffairs], await Chain(100_000m));
     }
 
     [Fact]
@@ -374,6 +381,74 @@ public sealed class CorrespondenceWorkflowTests(EduNexusFactory factory) : IClas
         Assert.Equal(HttpStatusCode.BadRequest, (await Put(Manager, """[{"id":"s","type":"start"},{"id":"a","type":"approval","when":{"field":"amount","op":"~","value":1}}]""")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Put(Manager, """[{"id":"s","type":"start"},{"id":"a","type":"approval","slaDays":0}]""")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Put(Manager, def.NodesJson)).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_College_Without_An_Administrative_Affairs_Unit_Cannot_Close_A_Letter_And_Is_Told_So()
+    {
+        var w = await BuildAsync(withAdminAffairs: false);
+        var id = await CreateAsync(w, "ADMIN_MEMO", to: w.TargetHead);
+        await SubmitAsync(w, id);
+        await DecideAsync(w, await PendingAsync(w.Tenant, id), true);
+        var last = await PendingAsync(w.Tenant, id);
+        var res = await DecideAsync(w, last, true);                                      // the recipient's approval would reach the closing step
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, res.StatusCode);
+        Assert.Contains("administrative affairs", (await Json(res)).GetProperty("error").GetString());
+        Assert.Equal(ApprovalStatus.Pending, (await Db(db => db.Approvals.AsNoTracking().SingleAsync(x => x.Id == last.Id))).Status);   // nothing was lost; repeat once the unit exists
+        // Once the college has the unit, the same decision goes through.
+        var aa = OrganizationalUnit.Create(w.Tenant, "ADMIN_AFFAIRS", "Administrative affairs", w.College, w.AdminAffairs);
+        await Db(async db => { db.OrganizationalUnits.Add(aa); await db.SaveChangesAsync(); return 0; });
+        Assert.Equal(HttpStatusCode.OK, (await DecideAsync(w, last, true)).StatusCode);
+        Assert.Equal(w.AdminAffairs, (await PendingAsync(w.Tenant, id)).AssigneeId);
+    }
+
+    [Fact]
+    public async Task Student_Services_Are_A_List_Of_Active_Types_And_Each_Ends_With_The_Colleges_Administrative_Affairs()
+    {
+        var w = await BuildAsync();
+        var sara = await Db(async db => { var p = new Person(Guid.NewGuid(), w.Tenant, PersonType.Student, "Sara", null, true, DateTimeOffset.UtcNow, (await db.OrganizationalUnits.SingleAsync(u => u.TenantId == w.Tenant && u.Code == "DEP")).Id); db.People.Add(p); await db.SaveChangesAsync(); return p.Id; });
+        var student = As(w.Tenant, StudentOnly, sara);
+        var services = (await student.GetFromJsonAsync<JsonElement[]>($"/api/correspondence/types?tenantId={w.Tenant}"))!.Select(t => t.GetProperty("code").GetString()).ToList();
+        Assert.Equal(["STUDENT_STATEMENT", "STUDENT_GRIEVANCE", "STUDENT_SECTION_CHANGE"], services);        // the dropdown: active services only (the generic type stays off)
+        var made = await student.PostAsJsonAsync("/api/correspondence", new { tenantId = w.Tenant, type = "Internal", subject = "Statement", content = "Please", authorId = sara, priority = "Normal", isConfidential = false, recipients = Array.Empty<object>(), typeCode = "STUDENT_STATEMENT" });
+        var id = (await Json(made)).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK, (await student.PostAsJsonAsync($"/api/correspondence/{id}/submit", new { tenantId = w.Tenant })).StatusCode);
+        Assert.Equal(w.StudentAffairs, (await PendingAsync(w.Tenant, id)).AssigneeId);
+        await DecideAsync(w, await PendingAsync(w.Tenant, id), true);
+        Assert.Equal(w.AdminAffairs, (await PendingAsync(w.Tenant, id)).AssigneeId);                      // the college of the student's department closes it
+        await DecideAsync(w, await PendingAsync(w.Tenant, id), true);
+        Assert.Equal(CorrespondenceStatus.Closed, await StatusAsync(id));
+    }
+
+    [Fact]
+    public async Task Financial_Limits_Are_Read_And_Set_Per_Level()
+    {
+        var w = await BuildAsync();
+        var admin = As(w.Tenant, Manager);
+        var read = await Json(await admin.GetAsync($"/api/correspondence/financial-limits?tenantId={w.Tenant}"));
+        var levels = read.GetProperty("levels").EnumerateArray().ToDictionary(l => l.GetProperty("stepId").GetString()!, l => l.GetProperty("above"));
+        Assert.Equal(JsonValueKind.Null, levels["line_manager"].ValueKind);                            // always signs
+        Assert.Equal(50000m, levels["vp"].GetDecimal());
+        Assert.Equal(250000m, levels["president"].GetDecimal());
+        Task<HttpResponseMessage> Put(object[] limits) => admin.PutAsJsonAsync("/api/correspondence/financial-limits", new { tenantId = w.Tenant, limits });
+        // Any level can get its own limit: here the head of the receiving unit signs only above 20,000, the VP above 80,000, the President above 400,000.
+        Assert.Equal(HttpStatusCode.OK, (await Put([new { stepId = "finance_exec", above = 20000m }, new { stepId = "vp", above = 80000m }, new { stepId = "president", above = 400000m }])).StatusCode);
+        var again = await Json(await admin.GetAsync($"/api/correspondence/financial-limits?tenantId={w.Tenant}"));
+        Assert.Equal(read.GetProperty("version").GetInt32() + 1, again.GetProperty("version").GetInt32());   // every change is a new version
+        Assert.Equal(80000m, again.GetProperty("levels").EnumerateArray().Single(l => l.GetProperty("stepId").GetString() == "vp").GetProperty("above").GetDecimal());
+        // 30,000: the receiving head now signs, the VP does not.
+        var id = await CreateAsync(w, "FINANCIAL", 30_000m, w.TargetUnit);
+        await SubmitAsync(w, id);
+        var seen = new List<Guid>();
+        for (var i = 0; i < 8 && await StatusAsync(id) == CorrespondenceStatus.Submitted; i++) { var a = await PendingAsync(w.Tenant, id); seen.Add(a.AssigneeId); await DecideAsync(w, a, true); }
+        Assert.Equal([w.Head, w.Finance, w.TargetHead, w.AdminAffairs], seen);
+        // Rules: a limit can be cleared, unknown or non-approval steps and bad amounts are refused, and only managers set them.
+        Assert.Equal(HttpStatusCode.OK, (await Put([new { stepId = "vp", above = (decimal?)null }])).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Put([new { stepId = "nope", above = 1m }])).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Put([new { stepId = "start", above = 1m }])).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Put([new { stepId = "vp", above = -5m }])).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await As(w.Tenant, Writer).PutAsJsonAsync("/api/correspondence/financial-limits", new { tenantId = w.Tenant, limits = Array.Empty<object>() })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await As(Guid.NewGuid(), Manager).GetAsync($"/api/correspondence/financial-limits?tenantId={w.Tenant}")).StatusCode);
     }
 
     [Fact]
