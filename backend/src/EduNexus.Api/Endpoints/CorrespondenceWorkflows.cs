@@ -38,6 +38,12 @@ public static class CorrespondenceWorkflows
             Role("hr", "Human resources decision", "HR_MANAGER", 5)),
         Flow("CORR_STUDENT_REQUEST", "Student request",
             Role("student_affairs", "Student affairs decision", "STUDENT_AFFAIRS", 5)),
+        Flow("CORR_STUDENT_STATEMENT", "Student service: statement or certificate",
+            Role("student_affairs", "Student affairs decision", "STUDENT_AFFAIRS", 3)),
+        Flow("CORR_STUDENT_GRIEVANCE", "Student service: grievance",
+            Role("student_affairs", "Student affairs review", "STUDENT_AFFAIRS", 7)),
+        Flow("CORR_STUDENT_SECTION_CHANGE", "Student service: section change",
+            Role("student_affairs", "Student affairs decision", "STUDENT_AFFAIRS", 5)),
         Flow("CORR_DECISION", "Decision",
             Role("legal", "Legal review", "LEGAL_ADVISOR", 3),
             By("recipient", "Notification of those concerned", "recipient", 2)),
@@ -73,6 +79,8 @@ public static class CorrespondenceWorkflows
     {
         var nodes = new List<Dictionary<string, object?>> { new() { ["id"] = "start", ["type"] = "start" } };
         nodes.AddRange(steps.Select(s => s.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value)));
+        // Every letter ends the same way: the college's administrative affairs unit confirms and closes the file.
+        nodes.Add(By("closure", "Closing by college administrative affairs", "college_admin_affairs", 2).Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value));
         nodes.Add(new() { ["id"] = "close", ["type"] = "close", ["label"] = "Closed" });
         return (code, name, JsonSerializer.Serialize(nodes));
     }

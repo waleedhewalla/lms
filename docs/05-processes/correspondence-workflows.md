@@ -1,6 +1,6 @@
 # Internal correspondence: types and workflows
 
-Every internal letter has a **type**. The type says who may start it, what it must contain, and which workflow it follows from creation to closure. The catalogue and the workflows are data: the university edits them (`PATCH /api/correspondence/types/{id}`, `POST /api/workflows/definitions/{id}/new-version`) without a release. `POST /api/correspondence/types/seed-defaults` creates the standard twelve and their workflows; anything the university already has is left alone.
+Every internal letter has a **type**. The type says who may start it, what it must contain, and which workflow it follows from creation to closure. The catalogue and the workflows are data: the university edits them (`PATCH /api/correspondence/types/{id}`, `POST /api/workflows/definitions/{id}/new-version`) without a release. `POST /api/correspondence/types/seed-defaults` creates the standard fifteen and their workflows; anything the university already has is left alone.
 
 ## Life of a letter
 
@@ -23,9 +23,10 @@ any unfinished letter ── close (records:manage, reason) ─▶ Closed
 - **Notifications:** the approver is notified in the app when a step reaches them; the author is notified when the letter is returned, rejected, completed or closed by someone else.
 - **No self-approval:** a step is skipped when its approver is the sender or already approved the same letter.
 - **Missing approver:** if a role has no holder or a unit has no head, nothing is started or saved; the sender is told what is missing (HTTP 422) and the decision can be repeated once the organisation is completed.
+- **Closing:** every workflow ends with a closing step done by the **head of the college's administrative affairs unit** (a unit with code `ADMIN_AFFAIRS` inside the sender's college; for a student, the college of the student's department, or of the receiving unit). Create that unit and give it a head in every college; without it the last approval is refused with a message naming what is missing, and can be repeated once it exists. Records (`records:manage`) can still close any unfinished letter.
 - **Confidential** letters follow the same steps and stay hidden from anyone without `correspondence:confidential`.
 
-## The twelve types
+## The fifteen types
 
 | Type (code) | Sender | Receiver | Purpose | Steps (responsible, deadline) | Extra conditions |
 |---|---|---|---|---|---|
@@ -34,7 +35,8 @@ any unfinished letter ── close (records:manage, reason) ─▶ Closed
 | Financial (`FINANCIAL`) | Any unit | Finance | Payments, advances, budgets | 1 Head of department (3 d) · 2 `FINANCE_MANAGER` (3 d) · 3 `VP_ADMIN_FINANCE` (3 d) · 4 `PRESIDENT` (5 d) · 5 Head of the receiving unit, execution (3 d) · Close | Needs a receiving unit and an amount. Step 3 only above **50,000**, step 4 only above **250,000** (provisional) |
 | Between departments (`INTER_UNIT`) | A department | Another department | Coordination | 1 Head of the sending department (3 d) · 2 Head of the receiving department (3 d) · Close | Needs a receiving unit |
 | Employee request (`EMPLOYEE_REQUEST`) | Staff member | HR, through the line manager | Leave, secondment, certificates | 1 Line manager (3 d) · 2 `HR_MANAGER` (5 d) · Close | |
-| Student request (`STUDENT_REQUEST`) | Student | Student affairs | Statements, grievances, section changes | 1 `STUDENT_AFFAIRS` (5 d) · Close | Off until the university switches it on. A student holds only `correspondence:student-request`: writes and sends only their own, sees only their own (`/mine`, `/history`), never the register |
+| Student services (`STUDENT_STATEMENT`, `STUDENT_GRIEVANCE`, `STUDENT_SECTION_CHANGE`) | Student | Student affairs | One type per service, chosen by the student from a list | 1 `STUDENT_AFFAIRS` (3 d statement, 7 d grievance, 5 d section change) · Close | On by default. A student holds only `correspondence:student-request`: sees the list of student services only, writes and sends only their own letters, sees only their own (`/mine`, `/history`), never the register. Add a service with `POST /api/correspondence/types` (permission `correspondence:student-request`) |
+| Student request, generic (`STUDENT_REQUEST`) | Student | Student affairs | Anything not in the list | 1 `STUDENT_AFFAIRS` (5 d) · Close | Off until the university switches it on |
 | Decision (`DECISION`) | Authorised official | Everyone concerned | Official decisions | 1 `LEGAL_ADVISOR` (3 d) · 2 The recipient, notification (2 d) · Close | |
 | Circular (`CIRCULAR`) | An official | A group or units | General notices | 1 Line manager (2 d) · 2 Dean (3 d) · Close | |
 | Information request or complaint (`INFO_REQUEST`) | Any staff member | The competent unit | Information or a complaint | 1 The recipient or the competent unit's head (5 d) · Close | Needs a recipient or a receiving unit |
@@ -60,13 +62,13 @@ At every step the approver may **approve**, **reject** (reason required) or **re
 
 Roles the standard workflows look for (create them, or edit the workflows): `FINANCE_MANAGER`, `VP_ADMIN_FINANCE`, `PRESIDENT`, `HR_MANAGER`, `STUDENT_AFFAIRS`, `LEGAL_ADVISOR`.
 
-## Decisions to confirm with the university
-1. **Financial limits.** 50,000 and 250,000 are placeholders. Set the real ones by editing the `CORR_FINANCIAL` workflow.
-2. **Who closes a letter.** Assumed: the last step of the workflow closes it; the author may withdraw; records may close any unfinished letter.
-3. **After a return**, does the letter restart from the first step (assumed) or resume at the step that returned it?
-4. The **student request** type is created switched off. Switch it on when student affairs is ready to receive them.
-5. College types: the sender's department and the receiving unit must share the same top-level unit (the college); the vice dean step is optional (passed over when nobody holds it). Tenants seeded before this change keep the older, mandatory vice dean step until their `CORR_TO_DEAN` workflow is edited (add `"optional": true` to that step).
-6. Step names, deadlines and the role codes above are the proposed defaults.
+## Decisions taken by the university
+1. **Financial limits** are configurable **per approval level**: `GET/PUT /api/correspondence/financial-limits` (and the "Financial approval limits" panel on the Correspondence page, for `workflow:manage`) set, for each level, the amount above which that level also approves a financial letter; empty = always approves. Each change is a new version of the `CORR_FINANCIAL` workflow. The shipped values (50,000 for the vice president, 250,000 for the president) are placeholders until the university sets its own.
+2. **Who closes:** the college's administrative affairs unit, as the last step (see "Closing" above).
+3. **After a return,** the letter restarts from the first step.
+4. **Student services** are chosen from a list: each service is a type of its own and is on by default.
+
+Still to confirm: the step names, deadlines and role codes above are the proposed defaults; tenants seeded before this change keep their older workflows until `seed-defaults` is run for new types and the closing step is added with `new-version`.
 
 ## On screen
 Correspondence page: **+ New letter** → choose the type → receiving unit / amount if asked → save as draft → **Send**. Open a letter in the register to see its path and history. A returned letter shows the reviewer's note; **Edit**, then **Send again**. **Withdraw** (author) and **Close** (records) ask for a reason. A student sees **My letters** only.

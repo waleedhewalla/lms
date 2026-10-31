@@ -352,6 +352,26 @@ public static class WorkflowRunner
             }
 
             // The first internal person the letter is addressed to (To, not Cc).
+            // The head of the college's unit with the given code (default ADMIN_AFFAIRS): the college is the top of the sender's department,
+            // or of the receiving unit when the sender has none (a student). It closes the letter at the end of the path.
+            if (key == "college_admin_affairs")
+            {
+                var code = node.TryGetProperty("unitCode", out var uc) && uc.GetString() is { Length: > 0 } c ? c : "ADMIN_AFFAIRS";
+                var units = await db.OrganizationalUnits.Where(u => u.TenantId == tenantId && u.IsActive).ToListAsync(ct);
+                Guid? start = (await db.People.FirstOrDefaultAsync(p => p.TenantId == tenantId && p.Id == sid, ct))?.DepartmentId;
+                if (start is null && Guid.TryParse(ctx["targetUnitId"]?.GetValue<string>(), out var tgt)) start = tgt;
+                var byId = units.ToDictionary(u => u.Id);
+                var root = start is { } sId && byId.TryGetValue(sId, out var cur) ? cur : null;
+                for (var i = 0; root?.ParentId is { } up && byId.TryGetValue(up, out var parent) && i < 12; i++) root = parent;
+                if (root is null) throw new KeyNotFoundException("The college of this letter is unknown (the sender has no department and no receiving unit is set), so its administrative affairs unit cannot be found.");
+                bool Under(OrganizationalUnit u) { for (var i = 0; i < 12 && u is not null; i++) { if (u.Id == root.Id) return true; u = u.ParentId is { } p && byId.TryGetValue(p, out var n) ? n : null!; } return false; }
+                var unit = units.FirstOrDefault(u => string.Equals(u.Code, code, StringComparison.OrdinalIgnoreCase) && Under(u));
+                if (unit?.LeaderPersonId is Guid head && head != Guid.Empty) return head;
+                throw new KeyNotFoundException(unit is null
+                    ? $"The college '{root.Name}' has no administrative affairs unit (a unit with code {code}) to close this letter."
+                    : $"The administrative affairs unit '{unit.Name}' of the college '{root.Name}' has no head to close this letter.");
+            }
+
             if (key == "recipient")
             {
                 if (Guid.TryParse(ctx["recipientId"]?.GetValue<string>(), out var rid)) return rid;

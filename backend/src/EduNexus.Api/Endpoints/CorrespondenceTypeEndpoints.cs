@@ -139,6 +139,10 @@ public static partial class CorrespondenceTypeEndpoints
         T("STUDENT_REQUEST", "Student request", "طلب طالب", "Statements, grievances and section changes asked for by a student.", "A student", "Student affairs or the department", Student, false, false, 60, active: false),
         T("DECISION", "Decision", "قرار", "An official decision of an authorised official.", "An authorised official", "Everyone concerned", General, false, false, 70),
         T("CIRCULAR", "Circular", "تعميم", "A general notice to a group or to units.", "An official", "A group or several units", General, false, false, 80),
+        // Student services: each is a type of its own, so a student picks the service from a list. More can be added with POST /types.
+        T("STUDENT_STATEMENT", "Student service: statement or certificate", "خدمة طالب: إفادة أو شهادة", "A statement of enrolment, a certificate or a transcript.", "A student", "Student affairs", Student, false, false, 61),
+        T("STUDENT_GRIEVANCE", "Student service: grievance", "خدمة طالب: تظلم", "A grievance against a mark or a decision.", "A student", "Student affairs", Student, false, false, 62),
+        T("STUDENT_SECTION_CHANGE", "Student service: section change", "خدمة طالب: تغيير شعبة", "A request to move to another section.", "A student", "Student affairs", Student, false, false, 63),
         T("COLLEGE_ADMIN", "Between college administrations", "مخاطبة بين إدارات الكلية", "Coordination between the administrative units of a college.", "An administration of the college", "Another administration of the same college", General, true, false, 100),
         T("COLLEGE_DEPT", "Between departments of a college", "مخاطبة بين أقسام الكلية", "Coordination between two departments of the same college.", "A department of the college", "Another department of the same college", General, true, false, 110),
         T("TO_DEAN", "To the dean or vice dean", "مخاطبة عميد الكلية أو وكيلها", "A matter put to the dean, through the vice dean.", "A member or unit of the college", "The vice dean, then the dean (the receiving unit is the college)", General, true, false, 120),

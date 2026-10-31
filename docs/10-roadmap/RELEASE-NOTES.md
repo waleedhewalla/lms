@@ -202,6 +202,12 @@ Feature-complete release of the delivery plan (Waves A–G).
 - In a letter to the dean, the vice dean step is passed over when the college has no vice dean (the history records the skip). Workflow steps can now carry `"optional": true` for this. New tenants get it from `seed-defaults`; tenants seeded earlier keep the mandatory step until their `CORR_TO_DEAN` workflow is edited.
 - **Compatibility:** letters already written to a unit outside the sender's college under these three types are not changed; only new letters and new sends are checked. No migration.
 
+## Correspondence: the university's decisions
+- **Financial limits per level.** Each approval level of the financial workflow has its own limit (the amount above which it also approves), editable on screen or with `GET/PUT /api/correspondence/financial-limits`. Every change is a new workflow version. The 50,000 / 250,000 defaults remain placeholders.
+- **Closing by the college's administrative affairs.** Every standard workflow now ends with a closing step for the head of the unit coded `ADMIN_AFFAIRS` in the sender's college (the student's college for a student). If a college has no such unit, the last approval is refused with a message naming it and can be repeated once the unit exists. **Action for each college:** create the unit and set its head.
+- **Student services from a list.** Three student services (statement or certificate, grievance, section change) are now separate, active types; a student chooses the service from a dropdown that shows only student services. The generic student request type stays off. More services can be added as types.
+- **Compatibility:** tenants already seeded keep their existing workflows (no closing step) and types until `seed-defaults` is run again for the new types; add the closing step to existing workflows with `new-version`. Letters in progress are unaffected. No migration.
+
 ## Known limits
 - A human pen-test (GA gate 14) must be run before production student data.
 - Access tokens are kept in browser storage. The CSP mitigates this.
